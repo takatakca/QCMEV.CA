@@ -5,7 +5,8 @@
  * Each device has its own hash chain and can independently go offline.
  */
 
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { DeviceType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -18,13 +19,22 @@ export class DevicesService {
     deviceType: string;
     model?: string;
     firmwareVersion?: string;
+    description?: string;
   }) {
+    if (!Object.values(DeviceType).includes(data.deviceType as DeviceType)) {
+      throw new BadRequestException(
+        `Invalid deviceType "${data.deviceType}". Expected one of: ${Object.values(DeviceType).join(', ')}`,
+      );
+    }
     return this.prisma.device.create({
       data: {
         operatorId,
-        description:     data.name ?? '',
+        name:            data.name,
         serialNumber:    data.serialNumber,
-        deviceType:      data.deviceType as any,
+        deviceType:      data.deviceType as DeviceType,
+        model:           data.model,
+        firmwareVersion: data.firmwareVersion,
+        description:     data.description,
       },
     });
   }
@@ -46,13 +56,37 @@ export class DevicesService {
     });
   }
 
-  async update(id: string, data: Partial<{ name: string; firmwareVersion: string; isActive: boolean }>) {
-    return this.prisma.device.update({ where: { id }, data: data as any });
+  async update(id: string, data: Partial<{
+    name: string;
+    model: string;
+    firmwareVersion: string;
+    description: string;
+    isActive: boolean;
+  }>) {
+    const existing = await this.prisma.device.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('Device not found');
+    // Explicit whitelist — never pass arbitrary client fields to Prisma
+    return this.prisma.device.update({
+      where: { id },
+      data: {
+        name:            data.name,
+        model:           data.model,
+        firmwareVersion: data.firmwareVersion,
+        description:     data.description,
+        isActive:        data.isActive,
+      },
+    });
   }
 
   async getOfflineStatus(deviceId: string) {
     const device = await this.prisma.device.findUnique({ where: { id: deviceId } });
     const queueSize = await this.prisma.offlineQueue.count({ where: { deviceId, status: 'PENDING' } });
-    return { offlineMode: device?.offlineMode, lastSyncAt: device?.lastSyncAt, pendingCount: queueSize };
+    if (!device) throw new NotFoundException('Device not found');
+    return {
+      offlineMode:  device.offlineMode,
+      offlineSince: device.offlineSince,
+      lastSyncAt:   device.lastSyncAt,
+      pendingCount: queueSize,
+    };
   }
 }

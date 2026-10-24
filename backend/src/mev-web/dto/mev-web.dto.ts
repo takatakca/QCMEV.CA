@@ -262,3 +262,15 @@ export class MevWebError extends Error {
     this.name = 'MevWebError';
   }
 }
+
+/**
+ * True when a MEV-WEB failure is transient (network down, timeout, 5xx) and the
+ * request should be queued for offline resubmission rather than rejected.
+ * A 4xx with a MEV codeRetour is a business rejection — retrying won't help.
+ */
+export function isTransientMevError(err: unknown): boolean {
+  if (!(err instanceof MevWebError)) return false;
+  if (err.code === 'NETWORK_ERROR') return true;
+  if (err.httpStatus === undefined || err.httpStatus === null) return true;
+  return err.httpStatus >= 500;
+}

@@ -18,8 +18,18 @@ import {
   DocumentResponse,
   MevWebError,
   MEV_ERROR_CODES,
+  isTransientMevError,
 } from './dto/mev-web.dto';
-import { MevEnvironment, MevRequestType, AuditEventType, LogSeverity } from '@prisma/client';
+import { assertTransactionPayload } from './payload-validator';
+import {
+  MevEnvironment,
+  MevRequestType,
+  AuditEventType,
+  LogSeverity,
+  MevStatus,
+  QueueStatus,
+  TransactionStatus,
+} from '@prisma/client';
 
 // MEV-WEB endpoint URLs
 const MEV_URLS: Record<MevEnvironment, string> = {
@@ -80,6 +90,7 @@ export class MevWebService {
     operatorId: string,
     payload: TransactionRequestPayload,
   ): Promise<TransactionResponse> {
+    assertTransactionPayload(payload);
     const signed = await this.signAndPrepare(operatorId, payload);
     return this.sendToMevWeb<TransactionResponse>(
       operatorId,
@@ -103,30 +114,45 @@ export class MevWebService {
   }
 
   /**
-   * Re-submit queued offline transactions in chronological order.
+   * Re-submit queued offline transactions in chronological order (SW-76 §4.7).
    * Called automatically when connectivity is restored.
+   *
+   * - Each payload is validated at runtime before signing (queue = untyped JSON).
+   * - Transient failure (network / 5xx): stop immediately, leave the rest PENDING,
+   *   so transactions are never sent out of order. Never marked FAILED — a fiscal
+   *   record must not be dropped because the network was down.
+   * - Business rejection (4xx) or invalid payload: item FAILED, linked transaction
+   *   REJECTED, continue with the next item.
+   * - Success: item COMPLETED and the linked Transaction gets its MEV number,
+   *   QR URL and certified data, exactly like a live submission.
    */
-  async submitOfflineBatch(deviceId: string): Promise<{ submitted: number; failed: number }> {
+  async submitOfflineBatch(
+    deviceId: string,
+  ): Promise<{ submitted: number; failed: number; remaining: number }> {
     const pending = await this.prisma.offlineQueue.findMany({
-      where: { deviceId, status: 'PENDING' },
+      where: { deviceId, status: QueueStatus.PENDING },
       orderBy: { createdAt: 'asc' },
-      include: { device: { include: { operator: true } } },
+      include: { device: true },
     });
 
     let submitted = 0;
     let failed = 0;
 
     for (const item of pending) {
-      try {
-        await this.prisma.offlineQueue.update({
-          where: { id: item.id },
-          data: { status: 'PROCESSING', lastAttemptAt: new Date() },
-        });
+      const operatorId = item.device.operatorId;
+      const attempts = item.attempts + 1;
 
-        const payload = item.payload as unknown as TransactionRequestPayload;
-        const operatorId = item.device.operatorId;
+      await this.prisma.offlineQueue.update({
+        where: { id: item.id },
+        data: { status: QueueStatus.PROCESSING, lastAttemptAt: new Date(), attempts },
+      });
+
+      try {
+        const payload: unknown = item.payload;
+        assertTransactionPayload(payload);
+
         const signed = await this.signAndPrepare(operatorId, payload);
-        await this.sendToMevWeb<TransactionResponse>(
+        const response = await this.sendToMevWeb<TransactionResponse>(
           operatorId,
           MevRequestType.TRX,
           MEV_ENDPOINTS.TRX,
@@ -135,25 +161,66 @@ export class MevWebService {
 
         await this.prisma.offlineQueue.update({
           where: { id: item.id },
-          data: { status: 'COMPLETED', processedAt: new Date() },
+          data: { status: QueueStatus.COMPLETED, processedAt: new Date(), errorMessage: null },
         });
+
+        if (item.transactionId) {
+          await this.prisma.transaction.update({
+            where: { id: item.transactionId },
+            data: {
+              mevTransactionNumber: response.numeroTransactionMEV,
+              mevSubmissionStatus:  MevStatus.ACCEPTED,
+              mevSubmittedAt:       new Date(),
+              mevResponse:          response as object,
+              qrCodeUrl:            response.urlCodeQR,
+              certifiedData:        response.donneeCertifiee,
+              status:               TransactionStatus.INVOICED,
+              invoicedAt:           new Date(),
+            },
+          });
+        }
         submitted++;
       } catch (err) {
-        const attempts = item.attempts + 1;
+        const message = err instanceof Error ? err.message : String(err);
+
+        if (isTransientMevError(err)) {
+          // Still offline — put it back and stop to preserve chronological order
+          await this.prisma.offlineQueue.update({
+            where: { id: item.id },
+            data: { status: QueueStatus.PENDING, errorMessage: message },
+          });
+          this.logger.warn(`Offline batch for device ${deviceId} paused at item ${item.id}: ${message}`);
+          break;
+        }
+
+        // Business rejection or invalid payload — will not succeed on retry
         await this.prisma.offlineQueue.update({
           where: { id: item.id },
-          data: {
-            status: attempts >= item.maxAttempts ? 'FAILED' : 'PENDING',
-            attempts,
-            errorMessage: err instanceof Error ? err.message : String(err),
-          },
+          data: { status: QueueStatus.FAILED, errorMessage: message },
+        });
+        if (item.transactionId) {
+          await this.prisma.transaction.update({
+            where: { id: item.transactionId },
+            data: { mevSubmissionStatus: MevStatus.REJECTED, mevResponse: { error: message } },
+          });
+        }
+        await this.auditLogService.log({
+          operatorId,
+          eventType:   AuditEventType.MEV_SUBMISSION_FAILED,
+          severity:    LogSeverity.ERROR,
+          deviceId,
+          entityId:    item.transactionId ?? item.id,
+          entityType:  item.transactionId ? 'Transaction' : 'OfflineQueue',
+          description: `Transaction hors ligne rejetée: ${message}`,
         });
         failed++;
-        this.logger.warn(`Offline batch item ${item.id} failed (attempt ${attempts})`);
       }
     }
 
-    return { submitted, failed };
+    const remaining = await this.prisma.offlineQueue.count({
+      where: { deviceId, status: QueueStatus.PENDING },
+    });
+    return { submitted, failed, remaining };
   }
 
   async checkMevWebConnectivity(operatorId: string): Promise<boolean> {

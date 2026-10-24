@@ -13,6 +13,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { MevWebService } from '../mev-web/mev-web.service';
 import { AuditLogService } from '../logging/audit-log.service';
 import { CertificatesService } from '../certificates/certificates.service';
+import { OfflineQueueService } from '../offline/offline-queue.service';
 import {
   TransactionRequestPayload,
   TransactionTypeCode,
@@ -21,6 +22,7 @@ import {
   SectorCode,
   FournitureItem,
   TaxCode,
+  isTransientMevError,
 } from '../mev-web/dto/mev-web.dto';
 import {
   TransactionType,
@@ -31,6 +33,7 @@ import {
   ModificationType,
   AuditEventType,
   LogSeverity,
+  MevRequestType,
 } from '@prisma/client';
 
 // Canadian tax rates (2025)
@@ -97,6 +100,7 @@ export class TransactionsService {
     private readonly mevWebService: MevWebService,
     private readonly auditLogService: AuditLogService,
     private readonly certificatesService: CertificatesService,
+    private readonly offlineQueueService: OfflineQueueService,
   ) {}
 
   // ─── Create Transaction ───────────────────────────────────────────────────
@@ -179,12 +183,11 @@ export class TransactionsService {
       include: { items: true },
     });
 
-    // If offline, enqueue for later submission
+    // If offline, enqueue for later submission (linked to the transaction so the
+    // MEV number / QR code are written back when the queue is flushed)
     if (device.offlineMode) {
       const payload = this.buildTransactionPayload(transaction, operator, user, items);
-      await this.prisma.offlineQueue.create({
-        data: { deviceId: dto.deviceId, requestType: 'TRX', payload: payload as object },
-      });
+      await this.offlineQueueService.enqueue(dto.deviceId, MevRequestType.TRX, payload, transaction.id);
       this.logger.log(`Transaction ${transaction.id} queued offline`);
       return transaction;
     }
@@ -221,6 +224,24 @@ export class TransactionsService {
 
       return updated;
     } catch (err) {
+      // MEV-WEB unreachable (network / timeout / 5xx) → SW-76 §4.7 offline mode:
+      // the sale is NOT lost — queue it, flag the device offline, return the transaction.
+      if (isTransientMevError(err)) {
+        const payload = this.buildTransactionPayload(transaction, operator, user, items);
+        await this.offlineQueueService.enqueue(dto.deviceId, MevRequestType.TRX, payload, transaction.id);
+        await this.offlineQueueService.activateOfflineMode(
+          dto.deviceId,
+          err instanceof Error ? err.message : String(err),
+        );
+        this.logger.warn(`Transaction ${transaction.id} queued offline — MEV-WEB unreachable`);
+        return this.prisma.transaction.update({
+          where: { id: transaction.id },
+          data: { mevSubmissionStatus: MevStatus.QUEUED_OFFLINE },
+          include: { items: true },
+        });
+      }
+
+      // Business rejection or invalid payload — surface it to the caller
       await this.prisma.transaction.update({
         where: { id: transaction.id },
         data: { mevSubmissionStatus: MevStatus.REJECTED, mevResponse: { error: String(err) } },
