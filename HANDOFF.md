@@ -52,7 +52,15 @@
   - `docker-compose.dev.yml`: build `target: builder` (prod stage has no nest CLI / next dev deps, hot reload could not start).
   - Note: `MEV_ENVIRONMENT` env var is not read by the code — the active env comes from `Operator.environment` in the DB.
 
+- 2026-10-24 — **CRITICAL fix: the API could not start.** `class-validator` / `class-transformer` were missing → Nest exits at boot (`ValidationPipe`). Added to dependencies. Verified: API boots against Postgres 16, `/api/mev-simulator/health` → 200.
+  - Required env at boot: `DATABASE_URL`, `PRIVATE_KEY_ENCRYPTION_KEY` (getOrThrow), `JWT_SECRET`.
+  - **Local test DB recipe** (no Docker in the cloud sandbox): `/usr/lib/postgresql/16/bin/initdb` as user `postgres` in `/var/tmp/qcmev-pgtest`, port 55432, user `takatak`, trust auth → `DATABASE_URL=postgresql://takatak@127.0.0.1:55432/qcmev`.
+
 ### Findings to fix next (found while reading, not yet done)
 - [ ] **Civil date uses UTC** — `getCivilDate()` in `transactions.service.ts` uses `toISOString()`. A sale at 21:00 in Québec (EDT) gets tomorrow's date. Must use `America/Toronto`. Same for `heureDebut` (`toTimeString()` = container TZ, usually UTC).
 - [ ] **`numeroTransactionOriginal` sends our internal UUID** (`relatedTransactionId`) instead of the original's MEV transaction number — affects ANN / COR / NDC.
+- [ ] **`POST /operators/register` returns 401** (verified live) — class-level `JwtAuthGuard` → first operator can never register. → task 5
+- [ ] **UTL + CRT send `entete: {} as any`** — header fields never filled; RQ would reject. CRT also uses `secteur ?? 'R'` (invalid) and NEQ from body. → task 5/6
+- [ ] **`POST /operators/users` returns `passwordHash`** to the client. → task 5
+- [ ] No way to re-send UTL after the certificate exists → users keep `mevUserId = null` → every TRX fails. → task 5
 - [ ] **Tenant isolation:** `devices.controller` update/findById don't check the device belongs to `req.user.operatorId`.
