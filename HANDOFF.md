@@ -98,3 +98,12 @@
 - [x] ~~`POST /operators/users` returns `passwordHash`~~ → fixed task 5
 - [x] ~~No way to re-send UTL~~ → `POST /api/operators/users/sync-mev` + `AuthService.syncMevUsers()`; auto-call after cert storage → task 6
 - [x] ~~Tenant isolation on devices~~ → `DevicesService.assertOwned()` on get/update/offline-status/flush; sales require device + user of the caller's operator.
+
+
+## 2026-10-24 — Dossier administratif Revenu Québec (priorité utilisateur)
+
+**Avant de refaire les PDF ou de reprendre le code : lire [docs/revenu-quebec/REPRISE.md](docs/revenu-quebec/REPRISE.md).**
+
+L’utilisateur demande désormais toutes les notes dans GitHub et autorise la poursuite de l’envoi à Revenu Québec. Deux originaux lus; SW-10 corrigé (copie avec signature manuscrite du concepteur conservée + copie pour nouvelle signature), résolution préparée et brouillon `.eml` produit. Aucun courriel envoyé : aucun outil/compte de messagerie disponible; résolution non signée; aucun certificat de signature numérique fourni. Le journal détaillé distingue les résultats vérifiés des affirmations de l’ancien agent et donne les étapes restantes. Le commit annoncé `fbcc91f` n’a pas été retrouvé dans les branches distantes accessibles.
+
+La branche distante `feature/official-protocol-foodhub` (`903e9db`) contient des travaux techniques plus récents que ce main, dont CERTIFICATION.md et SPEC_GAPS.md. Ne pas reprendre aveuglément l’ancienne liste technique de ce HANDOFF sans lire son état de relève sur cette branche. Aucune fusion de code ni validation officielle effectuée dans cette session.
