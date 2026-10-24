@@ -166,8 +166,9 @@ export type MevOutcome = 'accepted' | 'retry_batch' | 'rejected';
 /**
  * Error classes (design R7, PROVEN): a codRetour ending in 0, 1 or 5 means "not sent": resend it in a batch with
  * the next transaction. Any other code is a rejection that needs a human, including the "HTTP" error QCMEV puts in a
- * 4xx answer that carries no listErr (mev-web.service.ts). An empty list is "accepted" only because MevWebService never
- * hands over a 4xx without errors, nor a 2xx that is not a MEV-WEB answer.
+ * 4xx answer that carries no listErr where the callers read it (mev-web.service.ts, readableErrors). An empty list is
+ * "accepted" only because MevWebService never hands over a 4xx without errors in those lists (envelope, and for TRX
+ * every transaction), nor a 2xx that is not a MEV-WEB answer.
  */
 export function classifyErrors(errors: MevError[] | undefined): MevOutcome {
   if (!errors || errors.length === 0) return 'accepted';

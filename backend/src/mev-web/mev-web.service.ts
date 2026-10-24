@@ -9,9 +9,13 @@
  * - A network failure, a timeout, a 5xx, a 408 / 429 ("try again later") or a 2xx that is not a MEV-WEB answer (no
  *   retour* envelope, e.g. a proxy page) raises MevUnreachableError: the caller switches to offline mode. It is never
  *   stored as a rejection, and never as an acceptance.
- * - Any other 4xx is a rejection (core-line rule, HANDOFF task 1): when its body carries no listErr (a gateway 401 /
- *   403, a 404 from a wrong MEV_PATH_*, an HTML error page), an error {codRetour "HTTP"} is put in the answer, so the
- *   transaction is REJECTED (queue FAILED, audit) and a user is never marked registered. It is never "accepted".
+ * - Any other 4xx is a rejection (core-line rule, HANDOFF task 1). Only the error lists the callers read count: the
+ *   retour* envelope's own listErr and, for TRX, the listErr of each retourTransActu / retourTransLot item
+ *   (readableErrors). When a 4xx has none there (a gateway 401 / 403, a 404 from a wrong MEV_PATH_*, an HTML error
+ *   page, or a listErr outside the envelope such as a top-level {listErr} or {erreur: {listErr}}), an error
+ *   {codRetour "HTTP"} is put in the envelope; and in a 4xx batch answer, a transaction left without an error of its
+ *   own gets it too. So the transaction is REJECTED (queue FAILED, audit), a user is never marked registered and a
+ *   document is never ACCEPTED. A 4xx is never "accepted".
  */
 import { HttpService } from '@nestjs/axios';
 import { Inject, Injectable, Logger } from '@nestjs/common';
@@ -64,6 +68,25 @@ export function httpRejection(status: number): MevError {
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/** The listErr of one object of the answer, when it is a list (anything else is not an error list a caller reads). */
+const listErrOf = (v: unknown): MevError[] => (isObject(v) && Array.isArray(v.listErr) ? (v.listErr as MevError[]) : []);
+
+/**
+ * The errors of an answer exactly where the callers read them: the envelope's own listErr (CRT, UTL, DOC; the TRX
+ * global errors) and, for TRX, each item's listErr. A listErr anywhere else in the body is read by no caller, so it
+ * never counts as "this 4xx carries its errors" (it stays visible in MevRequestLog.responsePayload).
+ */
+export function readableErrors(kind: MevRequestKind, answer: unknown): MevError[] {
+  const env = isObject(answer) ? answer[ANSWER_ENVELOPE[kind]] : undefined;
+  if (!isObject(env)) return [];
+  const errors = [...listErrOf(env)];
+  if (kind === 'TRX') {
+    errors.push(...listErrOf(env.retourTransActu));
+    if (Array.isArray(env.retourTransLot)) env.retourTransLot.forEach((item) => errors.push(...listErrOf(item)));
+  }
+  return errors;
+}
 
 export interface SigningMaterial {
   privateKey: KeyObject;
@@ -134,13 +157,16 @@ export class MevWebService {
   async sendTransactions(op: OperatorIdentity, m: SigningMaterial, trans: TransActu[]): Promise<RetourTransItem[]> {
     if (!trans.length) return [];
     const body: ReqTrans = { reqTrans: trans.length === 1 ? { transActu: trans[0] } : { transLot: trans } };
-    const { data } = await this.post<RetourTrans>('TRX', op.id, this.signedHeaders(m), body, m);
+    const { status, data } = await this.post<RetourTrans>('TRX', op.id, this.signedHeaders(m), body, m);
     const r = data?.retourTrans ?? {};
     const globalErrors = r.listErr ?? [];
     const items = trans.length === 1 ? [r.retourTransActu ?? {}] : r.retourTransLot ?? [];
     return trans.map((t, i) => {
       const item = items.find((x) => x?.noTrans === t.noTrans) ?? items[i] ?? {};
-      return { ...item, listErr: [...globalErrors, ...(item.listErr ?? [])] };
+      const listErr = [...globalErrors, ...(item.listErr ?? [])];
+      // A 4xx is never "accepted": in a batch answer, a transaction left without an error of its own is rejected with
+      // the HTTP error, even when another transaction of the same answer carries real errors.
+      return { ...item, listErr: status >= 400 && !listErr.length ? [httpRejection(status)] : listErr };
     });
   }
 
@@ -202,13 +228,15 @@ export class MevWebService {
 
     this.lastOkAt = new Date();
     let data = answer as T;
-    let listErr = this.firstErrorCode(answer);
-    if (res.status >= 400 && !listErr) {
-      // Core-line rule: a 4xx is a rejection. Without a listErr of its own it would otherwise read as "accepted".
+    // Decided on the lists the callers read (readableErrors), never on a listErr found elsewhere in the body.
+    let errors = readableErrors(kind, answer);
+    if (res.status >= 400 && !errors.length) {
+      // Core-line rule: a 4xx is a rejection. Without an error where the caller reads it, it would read as "accepted".
       const inner = hasEnvelope ? (answer as Record<string, Record<string, unknown>>)[envelope] : {};
-      data = { ...(isObject(answer) ? answer : {}), [envelope]: { ...inner, listErr: [httpRejection(res.status)] } } as T;
-      listErr = 'HTTP';
+      errors = [httpRejection(res.status)];
+      data = { ...(isObject(answer) ? answer : {}), [envelope]: { ...inner, listErr: errors } } as T;
     }
+    const listErr = errors.length ? String(errors[0]?.codRetour ?? 'ERR') : null;
     await this.prisma.mevRequestLog.update({
       where: { id: log.id },
       data: {
@@ -221,22 +249,5 @@ export class MevWebService {
     });
     this.logger.log(`${kind} -> HTTP ${res.status}${listErr ? ` codRetour ${listErr}` : ''} (${Date.now() - started} ms)`);
     return { status: res.status, data };
-  }
-
-  private firstErrorCode(data: unknown): string | null {
-    const seen: string[] = [];
-    const walk = (v: unknown, depth: number) => {
-      if (!v || typeof v !== 'object' || depth > 5 || seen.length) return;
-      if (Array.isArray(v)) return v.forEach((x) => walk(x, depth + 1));
-      const o = v as Record<string, unknown>;
-      if (Array.isArray(o.listErr) && o.listErr.length) {
-        const e = o.listErr[0] as { codRetour?: string };
-        seen.push(String(e?.codRetour ?? 'ERR'));
-        return;
-      }
-      Object.values(o).forEach((x) => walk(x, depth + 1));
-    };
-    walk(data, 0);
-    return seen[0] ?? null;
   }
 }

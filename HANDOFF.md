@@ -191,3 +191,35 @@ which Food Hub already treats as "not ready": slow retry + alert). CONTRACT.md s
 2. Revenu Québec partner documents (SW-73, .A, .B, .D) → close `SPEC_GAPS.md` rows (#29 ASCII form, #30 `utc`, #31–32 new).
 3. Product decision: keep `QCMEV_PUBLIC_REGISTRATION` open outside the simulator? Non-exportable key custody (KMS / HSM) before PROD.
 4. Run `docker compose up --build` once on a machine with Docker.
+
+---
+
+## 2026-10-24 — Review round 2 on the protocol layer (branch `feature/official-protocol-foodhub`, PR #3)
+
+One finding (major, integrity), real. The round-1 fix decided "does this 4xx carry its errors?" on any `listErr`
+found anywhere in the body (depth 5), while the callers read only the `retour*` envelope (and, for TRX, its items).
+A 4xx with a `listErr` outside the envelope (top-level `{listErr}`, `{erreur: {listErr}}`) therefore reached the
+caller with an empty list and was **accepted**: sale ACCEPTED with no MEV-WEB number, queue COMPLETED, no audit,
+never sent again; UTL user marked registered; DOC report ACCEPTED. Same family: in a 4xx batch answer, a transaction
+left without an error of its own (another one carrying real errors) was accepted too.
+
+| Fix | Where |
+|---|---|
+| `readableErrors(kind, answer)`: the envelope's own `listErr`, plus each `retourTransActu` / `retourTransLot` item's `listErr` for TRX: exactly what `sendTransactions`, `OperatorsService`, `CertificatesService`, `ReportsService` read. A 4xx with nothing there gets `{codRetour: "HTTP"}` in the envelope; the depth-5 walk (`firstErrorCode`) is gone. `MevRequestLog.mevErrorCode` / `success` follow the same lists | `backend/src/mev-web/mev-web.service.ts` |
+| In a 4xx batch answer every transaction left without an error gets `HTTP-<status>` (REJECTED); real errors keep their class (95 stays `retry_batch`). 2xx answers unchanged | `MevWebService.sendTransactions` |
+| Tests: 15 new in `backend/test/protocol-round2.spec.ts`, including end to end through the real `TransactionsService.submitBatch` (REJECTED, queue FAILED, MEV_ERROR audit) and `OperatorsService.registerSevUser` (user not registered) | `backend/test/protocol-round2.spec.ts` |
+
+SPEC_GAPS #32 updated (where MEV-WEB puts header-level errors is unknown; SW-73).
+
+**Checks (2026-10-24, Windows, Node 22, embedded PostgreSQL 16):** backend typecheck 0 errors, lint 0, Jest 136 unit
+tests pass (20 database tests skipped without a DB); `tools/local-run/run-local.mjs --skip-unit` ALL GREEN: build,
+`prisma migrate deploy`, migration drift = no difference, SW-77 preparation 20/20, seed, CRT + UTL,
+`scripts/run-test-cases.ts` 13/13, Food Hub e2e 38/38 + 2/2 after restart, login rate limit 429. No migration.
+
+**Food Hub:** no change needed (a REJECTED sale is already reported to Food Hub as rejected; CONTRACT.md unchanged).
+
+### ▶ NEXT SESSION — start here (replaces the list above)
+1. Owner: review + merge PR #3 (`feature/official-protocol-foodhub`).
+2. Revenu Québec partner documents (SW-73, .A, .B, .D) → close `SPEC_GAPS.md` rows (#29 ASCII form, #30 `utc`, #31–32).
+3. Product decision: keep `QCMEV_PUBLIC_REGISTRATION` open outside the simulator? Non-exportable key custody (KMS / HSM) before PROD.
+4. Run `docker compose up --build` once on a machine with Docker.
