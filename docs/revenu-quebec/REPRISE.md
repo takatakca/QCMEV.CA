@@ -83,3 +83,8 @@ L’utilisateur demande une résolution électronique et l’envoi des deux piè
 L’utilisateur signale « I can’t read the file », sans encore identifier le fichier ni l’erreur complète. Tous les PDF existants ont été ouverts et rendus localement sans réparation; le dossier combiné mesure 974 559 octets (moins de 1 Mo), donc aucune preuve d’un dépassement de 40 Mo ou Go. Le problème de téléchargement ou de lecteur reste à préciser.
 
 `SW10-Resolution-LECTURE.pdf` : copie standard de 7 pages créée avec widgets aplatis et polices réduites, texte conservé et chaque page rendue avec succès. Destinée à la lecture/impression, sans champs interactifs. Elle ne remplace pas la résolution électronique à signer. Aucune nouvelle signature, adoption ou transmission effectuée.
+
+
+## Téléchargement — erreur précise et nouvel essai
+
+Erreur utilisateur : « Couldn't read this file. Check that this computer is connected and the file is smaller than 40 MB. » Elle concerne le dossier SW-10/résolution, y compris la copie simplifiée. Ce message ne prouve pas un PDF corrompu ni un problème de taille : les fichiers s’ouvrent et sont inférieurs à 2 Mo. Création de `RQ-Documents.zip` avec noms courts : `SW10.pdf` (copie conservant la signature manuscrite originale du concepteur), `Resolution.pdf` (champs électroniques vides à signer), `Dossier.pdf` (copie de lecture combinée non interactive). Archive testée, contenu extrait en mémoire comparé aux sources par SHA-256, toutes les pages des trois fichiers rendues. Aucun téléchargement depuis l’interface utilisateur ni ouverture sur son appareil n’a pu être vérifié. Fournir le lien GitHub brut de l’archive comme autre chemin de téléchargement. Aucun nouvel envoi ni signature effectué.
