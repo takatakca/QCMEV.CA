@@ -15,7 +15,7 @@ None of them can be proven with our own simulator.
 | 6 | Signed string | `noTrans + datTrans + TPS + TVQ + apresTax + noTPS + noTVQ + modImpr + modTrans + signa.preced` (S1) | `crypto/ecdsa.ts` | SW-73 |
 | 7 | Amount and number formats | Amounts `"12.34"` / `"-12.34"`; `noTrans` = plain sequential number per device per day | `common/money.ts`, `transactions.service.ts` | SW-73.A |
 | 8 | CSR subject | `C=CA, ST=QC, L=<utc>, SN=<nickname 8–32>, O=<sector>-<authorization code>, OU=<TVQ>, CN=<NEQ>, GN=<file number>` (S1) | `crypto/csr.ts` | SW-73 / SW-10 |
-| 9 | Certificate revocation / renewal | Local deactivation only; CRT `SUP` / `REM` with the 40-character `noSerie` not sent yet | `certificates.service.ts` | SW-73 |
+| 9 | Certificate revocation / renewal | Renewal = CRT `modif REM` + `noSerie` of the current certificate (the 2022 sample shows 40 characters, S1; QCMEV sends the serial as stored), headers signed with the current key (`IDAPPRL`, `EMPRCERTIFTRANSM`, `SIGNATRANSM`), IDAPPRL and signature chain kept; nightly job 03:00 America/Montreal for certificates within `CERT_RENEWAL_DAYS` (30). Revocation: local deactivation only (`SUP` not sent). How long before expiry REM is accepted, and whether an expired certificate may still sign it, are unknown | `certificates.service.ts`, `certificate-lifecycle.service.ts`, `simulator/` | SW-73 |
 | 10 | UTL body | `reqUtil{modif AJO/SUP/VAL, nomUtil, noTax=TVQ number}`; users registered on every certified device | `operators/operators.ts` | SW-73 |
 | 11 | DOC RUT body | `reqDoc{typDoc RUT, noDossFO, noTPS, noTVQ, annee, datDoc, sommVentes, sommVentesAnt}` | `reports/reports.ts` | SW-73.D |
 | 12 | QR code content | `<MEV_QR_BASE_URL>?f=<{a, n, d, m, s} encrypted with MEV-WEB's certificate>` (encryption PROVEN: SW-76 §4.2.1; scheme SPEC: ECDH P-256 + HKDF-SHA256 + AES-256-GCM, or RSA-OAEP-SHA256); the 2022 sample uses a `qr.mev-web.ca` link with an `f` parameter | `crypto/qr-crypto.ts`, `receipts/receipt-renderer.ts` | SW-73.B |
@@ -32,6 +32,8 @@ None of them can be proven with our own simulator.
 | 22 | `datTrans` of a sale that waited in Food Hub's outbox | QCMEV's issuance time (`occurredAt` kept for audit) | `foodhub.service.ts` | RQ answer |
 | 23 | `relaCommer`, `nomMandt`, instalment fields (`versActu`, `versAnt`, `sold`), `ajus`, `mtdu` | Not sent | `mev-web.types.ts` | SW-73.A |
 | 24 | MEV-WEB health | No public health endpoint known: `mevReachable` = result of the last real call | `mev-web.service.ts` | SW-73 |
-| 25 | The 12 internal scenarios | Ours, not SW-77; the personalized SW-77 cases must be imported and run in DEV then ESSAI | `scripts/run-test-cases.ts` | SW-77 |
+| 25 | The 12 internal scenarios and the SW-77 preparation suite | Ours, not SW-77 (`scripts/run-test-cases.ts`; `backend/test/sw77/sw77-preparation.spec.ts` keeps the core line's SW77-01…12 matrix on the official names); the personalized SW-77 cases must be imported and run in DEV then ESSAI | `scripts/`, `backend/test/sw77/` | SW-77 |
+| 27 | Operator self-registration | `POST /api/operators/register` is public (first-time setup), 5 per minute per IP; `QCMEV_PUBLIC_REGISTRATION=false` closes it. Who may create an operator in ESSAI / PROD is a product decision | `operators/operators.ts` | owner decision |
+| 28 | Formats checked locally before sending | `mev-web/payload-validator.ts` refuses a stored transaction whose names, codes or formats differ from the known ones (never sent, REJECTED + CRITICAL audit); lengths and the mandatory/optional matrix are not checked yet | `mev-web/payload-validator.ts` | SW-73.A |
 
 When an item is confirmed, fix the code, remove its SPEC / S1 marker, add a unit test, and delete the row.

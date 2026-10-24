@@ -55,8 +55,8 @@ honestly. Status: **built** = implemented and tested against our local simulator
 
 | Revenu Québec name | Status | Notes |
 |---|---|---|
-| Gérer les certificats numériques du SEV | partial | CRT `AJO` (ECDSA P-256 CSR) built; both certificates of the answer kept (ours, and MEV-WEB's, which encrypts the QR link data); renewal / revocation with `noSerie` not yet. **Gap:** SW-76 §4.2.1 asks a SEV for a non-exportable private key; QCMEV's keys are software keys sealed with AES-256-GCM (`SEV_KEY_CUSTODY=software`), so `MEV_ENVIRONMENT=PROD` is refused until a KMS / HSM custody is built |
-| Gérer les comptes utilisateurs / Gérer plusieurs employés | built | UTL `AJO` / `SUP` / `VAL`; `FOODHUB-AUTO` system user |
+| Gérer les certificats numériques du SEV | partial | CRT `AJO` (ECDSA P-256 CSR) built; both certificates of the answer kept (ours, and MEV-WEB's, which encrypts the QR link data); renewal built as CRT `REM` with the `noSerie` of the current certificate, signed with its key, on demand and by a nightly job (03:00, `CERT_RENEWAL_DAYS`), tested against our simulator only (SPEC: SW-73 renewal rules); revocation (`SUP`) is local only. **Gap:** SW-76 §4.2.1 asks a SEV for a non-exportable private key; QCMEV's keys are software keys sealed with AES-256-GCM (`SEV_KEY_CUSTODY=software`), so `MEV_ENVIRONMENT=PROD` is refused until a KMS / HSM custody is built |
+| Gérer les comptes utilisateurs / Gérer plusieurs employés | built | UTL `AJO` / `SUP` / `VAL`; every user registered again on a device after its certificate; `POST /operators/users/sync-mev` catches up the users not registered yet; `FOODHUB-AUTO` system user |
 | Gérer plusieurs appareils | built | one chain and one numbering per device |
 | Produire ou transmettre le rapport de l'utilisateur | built | DOC `RUT`, transmitted every time it is displayed |
 | Supports d'impression — Papier / Électronique | built | `formImpr PAP`, `ELE`, `PEL`, `NON`; on `PEL` the electronic copy carries « Copie électronique »; on an electronic invoice the link « Consulter la transaction en ligne » sits right under the QR |
@@ -69,6 +69,6 @@ honestly. Status: **built** = implemented and tested against our local simulator
    owner into the environment, never into git.
 2. SW-73, SW-73.A, SW-73.B, SW-73.D and the personalized SW-77 test cases, to close every item of `SPEC_GAPS.md`.
 3. Runs in DEV, then ESSAI (`CASESSAI`), then the certification number (`QCMEV_CERTIFICATION_NUMBER`) and the production
-   production authorization code of the SEV (mode SEV, from the « Configuration du SEV » service, not the server form FO-350.SD), and a
+   authorization code of the SEV (mode SEV, from the « Configuration du SEV » service, not the server form FO-350.SD), and a
    non-exportable key custody (KMS / HSM) — only then can `MEV_ENVIRONMENT=PROD` start.
 4. A written answer on how a Food Hub-type order intake (a terminal of the SEV) must be declared in the certified scope.

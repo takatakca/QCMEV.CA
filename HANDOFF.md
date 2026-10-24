@@ -109,3 +109,54 @@
 - [x] ~~No way to re-send UTL~~ → `POST /api/operators/users/sync-mev` + `AuthService.syncMevUsers()`; auto-call after cert storage → task 6
 - [x] ~~Tenant isolation on transactions~~ → task 8.
 - [x] ~~Tenant isolation on devices~~ → `DevicesService.assertOwned()` on get/update/offline-status/flush; sales require device + user of the caller's operator.
+
+
+---
+
+## 2026-10-24 — Merge: core line onto the OFFICIAL MEV-WEB protocol layer (branch `feature/official-protocol-foodhub`, replaces PR #2)
+
+Coordinated in issue #1 (core session keeps everything except the protocol layer; the Food Hub session owns the protocol
+layer, the Food Hub integration and the certification package). Base = `origin/main` d2d0dd6 + `origin/claude/nice-cray-4fhekg`
+1dc2849 (merged first, clean), then `origin/fix/functional-mev` (PR #2) merged and every conflict resolved by meaning.
+Nothing above this entry was removed. The "▶ NEXT SESSION" list above is superseded by the one at the end of this entry.
+
+**Rule applied:** every MEV-WEB message, header, signature, CSR, QR, receipt and transaction payload follows PR #2 (official
+names `ENVIRN`, `APPRLINIT=SEV`, `IDSEV`, `IDVERSI`, `CODCERTIF`, `IDPARTN`, `VERSI`, `VERSIPARN`, `IDAPPRL`, `NOTPS`, `NOTVQ`;
+bodies `reqCertif` / `reqUtil` / `reqTrans{transActu, transLot}` / `reqDoc`; ECDSA P-256; tags PROVEN / S1 / SPEC +
+`SPEC_GAPS.md`). The invented layer (`typeRequete`, `codeSEV`, `entete`/`corps`, `codeAutorisation`, RSA-2048, guessed
+`mev-web-*.revenuquebec.ca` URLs) is gone. Every behaviour of this log was kept and adapted:
+
+| Core-line behaviour (tasks above) | Where it lives now |
+|---|---|
+| 1 Offline semantics + queue write-back + device offline/online + audits | `TransactionsService.submitDevice()`: batches (`transLot`) in chain order until the queue is empty; answer (`psiNoTrans`, `psiDatTrans`, errors) written back; device online again only when its queue is empty; `OFFLINE_MODE_ACTIVATED` → `BATCH_SUBMITTED` → `OFFLINE_MODE_DEACTIVATED` (with duration); never REJECTED for a network error; flush every `MEV_OFFLINE_FLUSH_SECONDS` + 48 h watchdog (`OfflineWatchService`, replaces `offline-queue.service.ts` and its 5-minute cron) |
+| 2 Device `offlineSince`, `name` / `model` / `firmwareVersion` | `schema.prisma` Device; `POST /api/devices`, `PUT /api/devices/:id` (whitelist DTOs; file number + authorization code write-only, AES-GCM, frozen once certified) |
+| 3 Runtime validation of TRX payloads | `mev-web/payload-validator.ts` rewritten for the official names: checked before storing (issue) and before sending (queue); a bad stored record is never sent → REJECTED + queue FAILED + CRITICAL audit, the flush stops there (chain order) |
+| 4 Migration + Docker | ONE init migration `prisma/migrations/20261024000000_init` regenerated from the merged schema (`0001_init` of PR #2 removed); PR #2's production images (no secret, non-root, healthcheck) + new `dev` stages for `docker-compose.dev.yml` |
+| 5 Public operator registration + DTOs, UTL headers, MEV user sync | `POST /api/operators/register` (public, atomic operator + first ADMIN, 409 on NEQ / username, 5/min, `QCMEV_PUBLIC_REGISTRATION=false` closes it; NEQ / `noTPS` / `noTVQ` formats, sector `RBC`, password ≥ 12); UTL = official `reqUtil` signed by each certified device; `POST /api/operators/users/sync-mev` (no-op on the 2nd call) |
+| 6 Certificate lifecycle + nightly renewal | `certificates/certificate-lifecycle.service.ts`: CRT `AJO` (first) / `REM` + `noSerie` (renewal, signed with the current key, keeps IDAPPRL + chain, SPEC), then UTL for every user on that device; `@Cron('0 3 * * *', America/Montreal)`, window `CERT_RENEWAL_DAYS`, failures audited (CRITICAL if expired), re-entrancy guard; `POST /api/certificates/request`, `POST /api/certificates/renew`, `GET /api/certificates/active`, `GET /api/certificates/expiring` (scoped). Simulator: `REM` + `SIMULATOR_CERT_VALIDITY_DAYS` |
+| JWT `sub` fix | one payload shape everywhere (`AuthUser.sub`), strategy re-checks the user |
+| 8 Tenant isolation (devices, sales, receipts, items, cancel) | every `:id` route scoped by operator (404); an item must belong to the transaction in the route |
+| 9 ANN / COR / NDC reference the original MEV number | official layer: a credit note / reprint / post-invoice change carries `refs{noTrans, datTrans, avantTax}` of the original, fixed at signing time, so an original still queued offline is referenced at once and the new record is queued behind it (no more 409, no fill-in at flush); original REJECTED → 400; a credit note cannot be credited; cancel = full credit note; correction = « Facture corrigée » (`relatedTransactionId` on a credited receipt) or the price-change flow; the flush never resets a CREDITED status |
+| 10 class-validator DTOs | `transactions/dto`, `devices/dto`, `operators/dto`, `auth/dto` on the official fields (cents, `FP/F/P/NON`, `ARG/CRE/DEB/...`); global `ValidationPipe({ whitelist, transform })` in `src/bootstrap.ts` |
+| SW-77 suite (d2d0dd6) | `backend/test/sw77/sw77-preparation.spec.ts`: same SW77-01…12 matrix on the official names, database + in-process API + simulator (`QCMEV_DB_TESTS=1 npm run test:integration`, run by `tools/local-run`). Honest label: internal, NOT Revenu Québec's personalized SW-77 |
+| ThrottlerModule (d2d0dd6) | two tiers `short` / `medium` (`QCMEV_RATE_LIMIT_PER_SECOND` 10, `_PER_MINUTE` 100) per IP, per tenant on Food Hub routes (20/s), login 10/min, register 5/min; simulator + health skipped |
+
+**No duplicate modules left:** one simulator (`src/simulator`), one receipt service (`src/receipts`), one key store
+(`crypto/key-vault.ts`), one time helper (`common/time.ts`, America/Montreal), one offline mechanism, one `.env.example`
+(`backend/.env.example`; the root one had placeholder secrets that the config now refuses).
+
+**Checks (2026-10-24, Windows, Node 22, embedded PostgreSQL 16.14):** backend typecheck 0 errors, lint 0, Jest 94 unit tests
+pass (+18 database tests skipped without a DB), `nest build` OK; frontend typecheck / lint / `next build` OK (10 pages);
+`prisma migrate deploy` OK and `prisma migrate diff` = no drift; `tools/local-run/run-local.mjs` ALL GREEN: SW-77
+preparation 18/18, `scripts/run-test-cases.ts` 13/13, Food Hub e2e 38/38 + 2/2 after restart, login rate limit 429.
+Docker itself not run (no Docker on this machine).
+
+**Notes:** a database created from either old init migration must be reset (`docker compose down -v`). The operator's
+environment is fixed by the server's `MEV_ENVIRONMENT` (not by `Operator.environment` alone). The offline test uses the
+simulator's `mevDown` switch instead of pointing the operator at an unreachable URL.
+
+### ▶ NEXT SESSION — start here (replaces the list above)
+1. Owner: review + merge the PR of `feature/official-protocol-foodhub` (it supersedes PR #2, which is closed).
+2. Revenu Québec partner documents (SW-73, .A, .B, .D) → close `SPEC_GAPS.md` rows; personalized SW-77 cases → DEV, then ESSAI.
+3. Product decision: keep `QCMEV_PUBLIC_REGISTRATION` open outside the simulator? Non-exportable key custody (KMS / HSM) before PROD.
+4. Run `docker compose up --build` once on a machine with Docker.
