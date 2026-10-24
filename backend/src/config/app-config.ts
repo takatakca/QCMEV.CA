@@ -1,0 +1,204 @@
+/**
+ * Application configuration, read ONCE from the environment and validated before Nest starts.
+ *
+ * Rules (owner's security order, audit Q2/Q3):
+ *  - no default secret: JWT_SECRET and PRIVATE_KEY_ENCRYPTION_KEY must be set and strong, or the server refuses to start;
+ *  - MEV_ENVIRONMENT really chooses the MEV-WEB endpoint;
+ *  - PROD is refused unless QCMEV_CERTIFICATION_NUMBER is set;
+ *  - the simulator is mounted only in SIMULATOR or DEV, never in ESSAI or PROD;
+ *  - the Food Hub integration is OFF unless QCMEV_FOODHUB_ENABLED=true and a secret is set.
+ */
+import type { LogLevel } from '@nestjs/common';
+
+export type MevEnv = 'SIMULATOR' | 'DEV' | 'ESSAI' | 'PROD';
+export const MEV_ENVS: MevEnv[] = ['SIMULATOR', 'DEV', 'ESSAI', 'PROD'];
+
+export interface SevIdentity {
+  /** IDSEV, IDVERSI, CODCERTIF, IDPARTN, VERSI, VERSIPARN headers (values assigned by Revenu Québec; SPEC formats). */
+  idSev: string;
+  idVersi: string;
+  codCertif: string;
+  idPartn: string;
+  versi: string;
+  versiParn: string;
+}
+
+export interface AppConfig {
+  nodeEnv: string;
+  port: number;
+  logLevels: LogLevel[];
+  mevEnvironment: MevEnv;
+  /** Value of the ENVIRN header. The local simulator is addressed as DEV. */
+  envirnHeader: 'DEV' | 'ESSAI' | 'PROD';
+  /** CASESSAI header (test case number), only for ESSAI runs. */
+  casEssai: string;
+  mevBaseUrl: string;
+  mevPaths: { CRT: string; UTL: string; TRX: string; DOC: string };
+  mevTimeoutMs: number;
+  qrBaseUrl: string;
+  simulatorEnabled: boolean;
+  simulatorStateDir: string;
+  jwtSecret: string;
+  jwtExpiresIn: string;
+  keyEncryptionKey: Buffer;
+  sev: SevIdentity;
+  certificationNumber: string;
+  certified: boolean;
+  foodhub: {
+    enabled: boolean;
+    secrets: string[];
+    integrationIds: string[];
+    ratePerSecond: number;
+  };
+  frontendOrigins: string[];
+  offlineFlushSeconds: number;
+}
+
+export class ConfigError extends Error {}
+
+const WEAK_MARKERS = ['change', 'secret', 'password', 'example', 'default', 'placeholder', 'takatak', 'xxxx'];
+
+function req(env: NodeJS.ProcessEnv, name: string): string {
+  const v = (env[name] ?? '').trim();
+  if (!v) throw new ConfigError(`${name} is required`);
+  return v;
+}
+
+/** A JWT secret must be at least 32 characters, not a known placeholder, and not one repeated character. */
+export function assertStrongSecret(name: string, value: string): void {
+  if (value.length < 32) throw new ConfigError(`${name} must be at least 32 characters (use: openssl rand -hex 32)`);
+  const lower = value.toLowerCase();
+  if (WEAK_MARKERS.some((m) => lower.includes(m))) throw new ConfigError(`${name} looks like a placeholder; generate a random value`);
+  if (new Set(value).size < 8) throw new ConfigError(`${name} is too repetitive`);
+}
+
+/** PRIVATE_KEY_ENCRYPTION_KEY: exactly 32 bytes, given as 64 hex characters or base64. No padding, no truncation. */
+export function parseKeyEncryptionKey(raw: string): Buffer {
+  const v = raw.trim();
+  let key: Buffer | null = null;
+  if (/^[0-9a-fA-F]{64}$/.test(v)) key = Buffer.from(v, 'hex');
+  else if (/^[A-Za-z0-9+/_-]{43}=?$/.test(v)) key = Buffer.from(v.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+  if (!key || key.length !== 32) {
+    throw new ConfigError('PRIVATE_KEY_ENCRYPTION_KEY must be 32 random bytes as 64 hex characters (openssl rand -hex 32) or base64');
+  }
+  if (new Set(key).size < 8) throw new ConfigError('PRIVATE_KEY_ENCRYPTION_KEY is too repetitive');
+  return key;
+}
+
+function parseLogLevels(raw: string | undefined): LogLevel[] {
+  const order: LogLevel[] = ['error', 'warn', 'log', 'debug', 'verbose'];
+  const wanted = (raw ?? 'log').trim().toLowerCase() as LogLevel;
+  const idx = order.indexOf(wanted);
+  return order.slice(0, idx < 0 ? 3 : idx + 1);
+}
+
+function bool(raw: string | undefined, fallback = false): boolean {
+  if (raw == null || raw.trim() === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase());
+}
+
+function list(raw: string | undefined): string[] {
+  return (raw ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+  const port = Number(env.PORT ?? 3001);
+  if (!Number.isInteger(port) || port <= 0) throw new ConfigError('PORT must be a positive integer');
+
+  const mevEnvironment = (env.MEV_ENVIRONMENT ?? 'SIMULATOR').trim().toUpperCase() as MevEnv;
+  if (!MEV_ENVS.includes(mevEnvironment)) {
+    throw new ConfigError(`MEV_ENVIRONMENT must be one of ${MEV_ENVS.join(', ')} (got "${env.MEV_ENVIRONMENT}")`);
+  }
+
+  const jwtSecret = req(env, 'JWT_SECRET');
+  assertStrongSecret('JWT_SECRET', jwtSecret);
+  const keyEncryptionKey = parseKeyEncryptionKey(req(env, 'PRIVATE_KEY_ENCRYPTION_KEY'));
+
+  const certificationNumber = (env.QCMEV_CERTIFICATION_NUMBER ?? '').trim();
+  if (mevEnvironment === 'PROD' && !certificationNumber) {
+    throw new ConfigError('MEV_ENVIRONMENT=PROD is refused: QCMEV_CERTIFICATION_NUMBER is not set (the product is not certified)');
+  }
+
+  const simulatorEnabled = (mevEnvironment === 'SIMULATOR' || mevEnvironment === 'DEV') && bool(env.MEV_SIMULATOR_ENABLED, true);
+  const localSim = `http://127.0.0.1:${port}/api/mev-simulator`;
+
+  let mevBaseUrl: string;
+  if (mevEnvironment === 'SIMULATOR') {
+    mevBaseUrl = (env.SIMULATOR_URL ?? '').trim() || localSim;
+  } else {
+    // SPEC: the official DEV / ESSAI / PROD URLs come with the partner documents (SW-73). No guessed URL is built in.
+    mevBaseUrl = req(env, 'MEV_WEB_BASE_URL');
+    if (!/^https:\/\//.test(mevBaseUrl)) throw new ConfigError('MEV_WEB_BASE_URL must be an https:// URL outside the simulator');
+  }
+  mevBaseUrl = mevBaseUrl.replace(/\/+$/, '');
+
+  const sevDefaults: SevIdentity = {
+    idSev: 'SIM-IDSEV', idVersi: 'SIM-IDVERSI', codCertif: 'SIM-CODCERTIF', idPartn: 'SIM-IDPARTN', versi: '0.2.0', versiParn: '0',
+  };
+  const sev: SevIdentity = {
+    idSev: env.MEV_IDSEV?.trim() || '',
+    idVersi: env.MEV_IDVERSI?.trim() || '',
+    codCertif: env.MEV_CODCERTIF?.trim() || certificationNumber || '',
+    idPartn: env.MEV_IDPARTN?.trim() || '',
+    versi: env.MEV_VERSI?.trim() || '',
+    versiParn: env.MEV_VERSIPARN?.trim() || '',
+  };
+  for (const k of Object.keys(sev) as (keyof SevIdentity)[]) {
+    if (!sev[k]) {
+      if (mevEnvironment === 'SIMULATOR') sev[k] = sevDefaults[k];
+      else throw new ConfigError(`MEV_${k.toUpperCase()} is required outside the simulator (value given by Revenu Québec)`);
+    }
+  }
+
+  const qrBaseUrl = (env.MEV_QR_BASE_URL ?? '').trim() || (mevEnvironment === 'SIMULATOR' ? `${localSim}/qr` : '');
+  if (!qrBaseUrl) throw new ConfigError('MEV_QR_BASE_URL is required outside the simulator (SPEC: QR format from SW-73)');
+  if (mevEnvironment === 'SIMULATOR' && /revenuquebec\.ca|mev-web\.ca/i.test(qrBaseUrl)) {
+    throw new ConfigError('The simulator never points QR codes at a Revenu Québec domain');
+  }
+
+  const secrets = [env.QCMEV_FOODHUB_SECRET, env.QCMEV_FOODHUB_SECRET_PREVIOUS].map((s) => (s ?? '').trim()).filter(Boolean);
+  const foodhubEnabled = bool(env.QCMEV_FOODHUB_ENABLED, false);
+  if (foodhubEnabled) {
+    if (!secrets.length) throw new ConfigError('QCMEV_FOODHUB_ENABLED=true needs QCMEV_FOODHUB_SECRET');
+    secrets.forEach((s, i) => assertStrongSecret(i === 0 ? 'QCMEV_FOODHUB_SECRET' : 'QCMEV_FOODHUB_SECRET_PREVIOUS', s));
+  }
+
+  const envirnHeader: AppConfig['envirnHeader'] = mevEnvironment === 'SIMULATOR' ? 'DEV' : mevEnvironment;
+
+  return {
+    nodeEnv: env.NODE_ENV ?? 'development',
+    port,
+    logLevels: parseLogLevels(env.LOG_LEVEL),
+    mevEnvironment,
+    envirnHeader,
+    casEssai: (env.MEV_CASESSAI ?? '').trim() || '000.000',
+    mevBaseUrl,
+    mevPaths: {
+      // SPEC: path names from the 2022 sample code; confirm in SW-73.
+      CRT: env.MEV_PATH_CRT?.trim() || '/enrolement',
+      UTL: env.MEV_PATH_UTL?.trim() || '/utilisateur',
+      TRX: env.MEV_PATH_TRX?.trim() || '/transaction',
+      DOC: env.MEV_PATH_DOC?.trim() || '/document',
+    },
+    mevTimeoutMs: Number(env.MEV_TIMEOUT_MS ?? 10000),
+    qrBaseUrl,
+    simulatorEnabled,
+    simulatorStateDir: (env.MEV_SIMULATOR_STATE_DIR ?? '').trim(),
+    jwtSecret,
+    jwtExpiresIn: env.JWT_EXPIRES_IN?.trim() || '8h',
+    keyEncryptionKey,
+    sev,
+    certificationNumber,
+    certified: mevEnvironment === 'PROD' && !!certificationNumber,
+    foodhub: {
+      enabled: foodhubEnabled,
+      secrets,
+      integrationIds: list(env.QCMEV_FOODHUB_INTEGRATION_IDS).length ? list(env.QCMEV_FOODHUB_INTEGRATION_IDS) : ['foodhub', 'on2go_hub'],
+      ratePerSecond: Number(env.QCMEV_FOODHUB_RATE_PER_SECOND ?? 20),
+    },
+    frontendOrigins: list(env.FRONTEND_URL).length ? list(env.FRONTEND_URL) : ['http://localhost:3000'],
+    offlineFlushSeconds: Number(env.MEV_OFFLINE_FLUSH_SECONDS ?? 30),
+  };
+}
+
+export const APP_CONFIG = Symbol('APP_CONFIG');
