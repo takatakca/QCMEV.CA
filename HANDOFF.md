@@ -107,3 +107,8 @@
 L’utilisateur demande désormais toutes les notes dans GitHub et autorise la poursuite de l’envoi à Revenu Québec. Deux originaux lus; SW-10 corrigé (copie avec signature manuscrite du concepteur conservée + copie pour nouvelle signature), résolution préparée et brouillon `.eml` produit. Aucun courriel envoyé : aucun outil/compte de messagerie disponible; résolution non signée; aucun certificat de signature numérique fourni. Le journal détaillé distingue les résultats vérifiés des affirmations de l’ancien agent et donne les étapes restantes. Le commit annoncé `fbcc91f` n’a pas été retrouvé dans les branches distantes accessibles.
 
 La branche distante `feature/official-protocol-foodhub` (`903e9db`) contient des travaux techniques plus récents que ce main, dont CERTIFICATION.md et SPEC_GAPS.md. Ne pas reprendre aveuglément l’ancienne liste technique de ce HANDOFF sans lire son état de relève sur cette branche. Aucune fusion de code ni validation officielle effectuée dans cette session.
+
+
+### Suivi administratif — compte et classement
+
+Dernière demande : **takatak.ca@gmail.com** comme expéditeur, suivi des réponses et archivage dans le OneDrive associé. `docs/revenu-quebec/ENVOI-ET-SUIVI.md` décrit le dossier prêt à envoyer et les règles de classement / reprise. Lettre texte + PDF et `.eml` mis à jour. Aucun outil Gmail ou OneDrive exposé : aucun envoi, dépôt ou surveillance automatique actif. Ne pas demander de nouveau les coordonnées ni refaire les documents existants.

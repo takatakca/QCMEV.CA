@@ -7,3 +7,10 @@
 - Empreintes SHA-256 des trois PDF vérifiées. Rendus visuels des pages 2, 3, 6 et de la résolution contrôlés.
 
 Ces contrôles portent sur les documents produits; ils ne constituent ni une signature numérique, ni un envoi, ni une validation officielle du logiciel.
+
+## Mise à jour du dossier d’envoi
+
+- Expéditeur et Reply-To du .eml vérifiés : takatak.ca@gmail.com; destinataire et copie inchangés, X-Unsent=1, aucune pièce jointe.
+- Lettre texte et corps du .eml concordants après normalisation CRLF/LF; attribution Codex présente.
+- Lettre PDF : une page, courriel choisi et attribution présents; empreinte ajoutée au manifeste.
+- PDF SW-10 et résolution inchangés depuis la vérification précédente. Aucun envoi ou dépôt OneDrive effectué.
