@@ -14,3 +14,10 @@ Ces contrôles portent sur les documents produits; ils ne constituent ni une sig
 - Lettre texte et corps du .eml concordants après normalisation CRLF/LF; attribution Codex présente.
 - Lettre PDF : une page, courriel choisi et attribution présents; empreinte ajoutée au manifeste.
 - PDF SW-10 et résolution inchangés depuis la vérification précédente. Aucun envoi ou dépôt OneDrive effectué.
+
+## Résolution électronique et dossier combiné
+
+- Trois champs de signature PDF et trois champs texte de date présents, requis et vides; aucune signature numérique appliquée.
+- Dossier combiné : 7 pages; rendu des 6 pages SW-10 égal à la copie de référence; widgets de la résolution préservés à la page 7.
+- Vérification des coordonnées, annexe et champs restant vides consignée dans VERIFICATION-CHAMPS.md; résolution électronique contrôlée visuellement.
+- ZIP de deux PDF contrôlé sans erreur. Empreintes des nouveaux PDF ajoutées. Aucun envoi effectué.

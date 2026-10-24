@@ -112,3 +112,8 @@ La branche distante `feature/official-protocol-foodhub` (`903e9db`) contient des
 ### Suivi administratif — compte et classement
 
 Dernière demande : **takatak.ca@gmail.com** comme expéditeur, suivi des réponses et archivage dans le OneDrive associé. `docs/revenu-quebec/ENVOI-ET-SUIVI.md` décrit le dossier prêt à envoyer et les règles de classement / reprise. Lettre texte + PDF et `.eml` mis à jour. Aucun outil Gmail ou OneDrive exposé : aucun envoi, dépôt ou surveillance automatique actif. Ne pas demander de nouveau les coordonnées ni refaire les documents existants.
+
+
+### Résolution électronique — dernière étape documentaire
+
+Résolution PDF avec trois champs de signature et trois dates créée, ainsi qu’un dossier combiné de 7 pages avant signature. Lire `docs/revenu-quebec/VERIFICATION-CHAMPS.md` pour l’inventaire des champs vérifiés et ceux laissés vides. Champs administratifs du SW-10 remplis avec les renseignements fournis; numéro d’identification et poste non fournis laissés vides, signature/date Revenu Québec réservées. Résolution toujours non signée, non adoptée; aucun envoi.

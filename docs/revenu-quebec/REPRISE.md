@@ -71,3 +71,8 @@ Les originaux restent dans les pièces jointes et ne sont pas remplacés. La not
 ## Mise à jour — envoi et OneDrive demandés
 
 L’utilisateur choisit **takatak.ca@gmail.com**, autorise la préparation complète et le suivi des réponses, souhaite le classement dans le OneDrive associé, et accepte un dossier prêt à envoyer lui-même si l’accès manque. Lire **ENVOI-ET-SUIVI.md** : lettre texte et PDF préparés, expéditeur du `.eml` mis à jour, attribution de rédaction Codex ajoutée. Aucun envoi ni dépôt OneDrive ni automatisation durable exécuté. Ne pas refaire les PDF SW-10 et résolution : ils restent inchangés. La lettre est une demande de procédure immédiatement envoyable sans pièces, distincte de la transmission ultérieure des documents signés.
+
+
+## Dernière demande — deux PDF ensemble et contrôle des champs
+
+L’utilisateur demande une résolution électronique et l’envoi des deux pièces ensemble. Créés : `Resolution-CA-Revers-Canada-SW-10-SIGNATURES-ELECTRONIQUES.pdf` (3 champs de signature et 3 dates) et `Dossier-SW-10-et-resolution-electronique-A-COMPLETER.pdf` (7 pages; six pages SW-10 inchangées au rendu, puis résolution avec champs). Vérifications détaillées dans **VERIFICATION-CHAMPS.md**. Les champs de signature sont vides; aucune signature d’administrateur inventée, aucune résolution adoptée constatée. ZIP local `/workspace/SW-10-et-resolution-electronique.zip` contenant les deux PDF séparés, testé. Réunir les pièces avant signature numérique; ne pas modifier après. Aucun envoi effectué. Le SW-10 conserve les deux contacts préexistants; takatak.ca@gmail.com reste l’expéditeur choisi.
