@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
  * Local end-to-end run WITHOUT Docker (Windows, macOS, Linux):
- *   embedded PostgreSQL → prisma migrate deploy → seed (placeholders) → backend in SIMULATOR mode →
- *   CRT + UTL for each device → Jest unit tests → 12 internal scenarios → Food Hub contract e2e →
- *   backend restart → replay checks → teardown.
+ *   embedded PostgreSQL → prisma migrate deploy → migration drift check → SW-77 preparation suite (database,
+ *   in-process API + simulator) → seed (placeholders) → backend in SIMULATOR mode → CRT + UTL for each device →
+ *   Jest unit tests → 12 internal scenarios → Food Hub contract e2e → backend restart → replay checks →
+ *   login rate limit → teardown.
  *
  *   cd tools/local-run && npm install && node run-local.mjs [--keep] [--skip-build] [--skip-unit]
  *
@@ -82,6 +83,10 @@ const baseEnv = {
   MEV_SIMULATOR_STATE_DIR: path.join(work, 'simulator'),
   MEV_OFFLINE_FLUSH_SECONDS: '5',
   LOG_LEVEL: 'log',
+  // Every script below talks from 127.0.0.1: the per-IP tiers are raised for the run (their defaults, 10/s and
+  // 100/min, are unit-tested); the login limit (10/min) still applies and is checked at the end.
+  QCMEV_RATE_LIMIT_PER_SECOND: '1000',
+  QCMEV_RATE_LIMIT_PER_MINUTE: '100000',
   SEED_FILE: seedFile,
 };
 
@@ -154,6 +159,8 @@ try {
   const npx = 'npx';
   if (!SKIP_BUILD && !run('build', 'npm run build', backend)) throw new Error('build failed');
   if (!run('prisma migrate deploy', `${npx} prisma migrate deploy`, backend)) throw new Error('migrate failed');
+  if (!run('migration drift (database = schema.prisma)', `${npx} prisma migrate diff --from-url "${DATABASE_URL}" --to-schema-datamodel prisma/schema.prisma --exit-code`, backend)) exitCode = 1;
+  if (!run('SW-77 preparation suite (database, in-process API + simulator)', 'npm run test:integration --silent', backend, { ...baseEnv, QCMEV_DB_TESTS: '1' })) exitCode = 1;
   if (!run('seed:operator (placeholders)', 'npm run seed:operator', backend)) throw new Error('seed failed');
 
   startBackend();
@@ -196,6 +203,13 @@ try {
   startBackend();
   if (!(await waitHealth())) throw new Error('backend did not restart');
   if (!run('Food Hub contract e2e (after restart)', `${tsnode} ../scripts/verify-foodhub-e2e.ts --phase=after-restart`, backend, e2eEnv)) exitCode = 1;
+
+  // Rate limit (ThrottlerModule): the 11th login attempt within a minute from one IP answers 429.
+  const codes = [];
+  for (let i = 0; i < 11; i++) codes.push((await api('POST', '/auth/login', { username: 'admin-e2e', password: 'wrong-password' })).status);
+  const limited = codes.slice(0, 10).every((c) => c === 401) && codes[10] === 429;
+  steps.push({ step: 'rate limit: 11th login in a minute → 429', ok: limited, detail: limited ? undefined : codes.join(',') });
+  if (!limited) exitCode = 1;
 } catch (e) {
   exitCode = 1;
   log(`ERROR: ${e instanceof Error ? e.message : e}`);

@@ -81,6 +81,35 @@ describe('local simulator: CRT with a throwaway CA, UTL, TRX with signature and 
     expect(send('3', first, true)).toEqual(expect.arrayContaining(['SIM-MONT-APRESTAX']));
   });
 
+  it('CRT REM (renewal): signed by the current certificate, same IDAPPRL, chain and users kept', async () => {
+    const { csrPem, privateKeyPem } = await generateKeyAndCsr({ utcOffset: '-04:00', nickname: 'Certificat E2E-A', sector: 'RBC', authorizationCode: 'XXXX-XXXX', noTVQ: ident.noTVQ, neq: '0000000000', fileNumber: 'ER0000' });
+    const crt = (noSerie: string, signer = key) => {
+      const body = { reqCertif: { modif: 'REM', csr: csrBody(csrPem), noSerie } };
+      const raw = JSON.stringify(body);
+      return sim.enrolement({ ...headers, codautori: 'XXXX-XXXX', notps: 'x', notvq: 'y', idapprl: idApprl, signatransm: signP256(signer, raw), emprcertiftransm: certThumbprint(certPem) }, body, raw);
+    };
+    const serial = new crypto.X509Certificate(certPem).serialNumber;
+    expect((await crt('00')).status).toBe(400); // not the current certificate
+    expect((await crt(serial, crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey)).status).toBe(401); // not signed by it
+    const res = await crt(serial);
+    expect(res.status).toBe(200);
+    const r = (res.body as { retourCertif: { idApprl: string; certif: string } }).retourCertif;
+    expect(r.idApprl).toBe(idApprl);
+    certPem = `-----BEGIN CERTIFICATE-----\n${r.certif.match(/.{1,64}/g)!.join('\n')}\n-----END CERTIFICATE-----\n`;
+    key = crypto.createPrivateKey(privateKeyPem);
+    // The next transaction continues the same chain (preced = the device's last signature) and the user is still registered.
+    const state = (sim as unknown as { store: { get(): { devices: Record<string, { lastSignature: string | null; users: string[] }> } } }).store.get();
+    const preced = state.devices[idApprl].lastSignature as string;
+    expect(preced).toHaveLength(88);
+    expect(state.devices[idApprl].users).toContain('FOODHUB-AUTO');
+    const { core, signedString } = buildTransCore(draft, { noTrans: '4', datTrans: '20261024121000', utc: '-04:00', datActu: '20261024121000', nomUtil: 'FOODHUB-AUTO', preced }, ident);
+    const body = { reqTrans: { transActu: { ...core, signa: { actu: signP256(key, signedString), preced, datActu: core.datTrans }, noDossFO: 'ER0000', ...ident } } };
+    const raw = JSON.stringify(body);
+    const item = (sim.transaction(signedHeaders(raw), raw, body as never).body as { retourTrans: { retourTransActu: { listErr: unknown[]; psiNoTrans?: string } } }).retourTrans.retourTransActu;
+    expect(item.listErr).toEqual([]);
+    expect(item.psiNoTrans).toMatch(/^SIM\d+$/);
+  });
+
   it('mode SEV: a request that says it comes from a forwarding server (APPRLINIT=SRV) is refused', async () => {
     const res = await sim.enrolement({ ...headers, apprlinit: 'SRV', codautori: 'XXXX-XXXX', notps: 'x', notvq: 'y' }, { reqCertif: { modif: 'AJO', csr: 'x' } });
     expect(res.status).toBe(400);
