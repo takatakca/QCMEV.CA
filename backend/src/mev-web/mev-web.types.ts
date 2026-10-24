@@ -15,7 +15,8 @@ export type MevRequestKind = 'CRT' | 'UTL' | 'TRX' | 'DOC';
 export interface MevHeaders {
   ENVIRN: 'DEV' | 'ESSAI' | 'PROD';
   CASESSAI?: string;
-  APPRLINIT: 'SRV';
+  /** SEV = the request comes from the SEV itself (QCMEV's mode, SW-76 §4.1.2); SRV would be a forwarding server. */
+  APPRLINIT: 'SEV';
   IDAPPRL?: string;
   IDSEV: string;
   IDVERSI: string;

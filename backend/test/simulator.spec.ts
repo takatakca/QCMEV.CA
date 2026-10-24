@@ -5,11 +5,13 @@ import * as path from 'path';
 import { loadConfig } from '../src/config/app-config';
 import { csrBody, generateKeyAndCsr } from '../src/crypto/csr';
 import { certThumbprint, FIRST_PRECED, signP256, verifyP256 } from '../src/crypto/ecdsa';
+import { encryptQrPayload } from '../src/crypto/qr-crypto';
+import { qrPayload } from '../src/receipts/receipt-renderer';
 import { MevSimulatorService } from '../src/simulator/mev-simulator.service';
 import { buildTransCore, SaleDraft } from '../src/transactions/trans-builder';
 
 const ident = { noTPS: '000000000RT0001', noTVQ: '0000000000TQ0001' };
-const headers = { envirn: 'DEV', apprlinit: 'SRV', idsev: 'a', idversi: 'b', codcertif: 'c', idpartn: 'd', versi: 'e', versiparn: 'f' };
+const headers = { envirn: 'DEV', apprlinit: 'SEV', idsev: 'a', idversi: 'b', codcertif: 'c', idpartn: 'd', versi: 'e', versiparn: 'f' };
 const draft: SaleDraft = {
   documentKind: 'RECEIPT', typTrans: 'RFER', modImpr: 'FAC', formImpr: 'PAP', modTrans: 'OPE', typServ: 'LVT', ecommerce: false, modPai: 'AUT',
   lines: [{ description: 'Poutine', quantity: '1', unitPriceCents: 1299, totalCents: 1299, tax: 'FP', activity: 'RES' }],
@@ -22,6 +24,7 @@ describe('local simulator: CRT with a throwaway CA, UTL, TRX with signature and 
   let key: crypto.KeyObject;
   let certPem: string;
   let idApprl: string;
+  let mevWebPem: string;
 
   afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
 
@@ -36,6 +39,7 @@ describe('local simulator: CRT with a throwaway CA, UTL, TRX with signature and 
     expect(res.status).toBe(200);
     const r = (res.body as { retourCertif: { idApprl: string; certif: string; certifPSI: string } }).retourCertif;
     idApprl = r.idApprl;
+    mevWebPem = `-----BEGIN CERTIFICATE-----\n${r.certifPSI.match(/.{1,64}/g)!.join('\n')}\n-----END CERTIFICATE-----\n`;
     certPem = `-----BEGIN CERTIFICATE-----\n${r.certif.match(/.{1,64}/g)!.join('\n')}\n-----END CERTIFICATE-----\n`;
     const x = new crypto.X509Certificate(certPem);
     expect(x.subject).toContain('O=RBC-XXXX-XXXX');
@@ -75,5 +79,22 @@ describe('local simulator: CRT with a throwaway CA, UTL, TRX with signature and 
     expect(send('2', FIRST_PRECED)).toContain('SIM-SIGNA-PRECED');
     expect(send('1', first)).toContain('SIM-NOTRANS-DUP');
     expect(send('3', first, true)).toEqual(expect.arrayContaining(['SIM-MONT-APRESTAX']));
+  });
+
+  it('mode SEV: a request that says it comes from a forwarding server (APPRLINIT=SRV) is refused', async () => {
+    const res = await sim.enrolement({ ...headers, apprlinit: 'SRV', codautori: 'XXXX-XXXX', notps: 'x', notvq: 'y' }, { reqCertif: { modif: 'AJO', csr: 'x' } });
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(res.body)).toContain('SIM-APPRLINIT');
+  });
+
+  it("QR: the link data is encrypted with MEV-WEB's certificate (certifPSI) and only the simulator can read it", () => {
+    const plain = qrPayload({ idApprl, noTrans: '1', datTrans: '20261024120000', apresTax: '14.94', signature: first });
+    const token = encryptQrPayload(mevWebPem, plain);
+    expect(token).toMatch(/^e1./);
+    expect(token).not.toContain(idApprl);
+    expect(Buffer.from(token.slice(3), 'base64url').toString('latin1')).not.toContain('20261024120000');
+    expect(sim.lookupQr(token)).toMatchObject({ idApprl, noTrans: '1', apresTax: '14.94' });
+    expect(sim.lookupQr(Buffer.from(plain).toString('base64url'))).toBeNull();
+    expect(encryptQrPayload(mevWebPem, plain)).not.toBe(token); // fresh ephemeral key every time
   });
 });

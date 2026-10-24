@@ -33,7 +33,8 @@ import { AuditLogService } from '../logging/audit-log.service';
 import { MevUnreachableError, MevWebService } from '../mev-web/mev-web.service';
 import { classifyErrors, TransActu, TransCore } from '../mev-web/mev-web.types';
 import { PrismaService } from '../prisma/prisma.service';
-import { qrContent } from '../receipts/receipt-renderer';
+import { encryptQrPayload } from '../crypto/qr-crypto';
+import { qrContent, qrPayload } from '../receipts/receipt-renderer';
 import { assertSaleRules, buildTransCore, PaymentCode, SaleDraft, SaleLine, SaleRuleError, saleTotals, SaleTotals } from './trans-builder';
 
 export type TxWithItems = Transaction & { items: TransactionItem[] };
@@ -120,6 +121,9 @@ export class TransactionsService {
       throw e;
     }
     if (material.expired) warnings.push('certificateInvalid');
+    // SW-76 §4.2.1: the QR link data is encrypted with MEV-WEB's certificate (returned by CRT). No certificate, no invoice.
+    const mevWebCertPem = await this.certificates.mevWebCertificate(deviceId);
+    if (!mevWebCertPem) throw new LocationNotReadyError('certReady', 'no MEV-WEB certificate to encrypt the QR code (run CRT again)');
 
     const created = await this.prisma.$transaction(
       async (tx) => {
@@ -148,7 +152,7 @@ export class TransactionsService {
         const signature = signP256(material.privateKey, signedString);
         const full: TransCore = { ...core, signa: { actu: signature, preced, datActu: now.datTrans } };
         const hashChain = nextHashChain(prev?.hashChain ?? GENESIS_HASH, canonicalJson(full));
-        const qr = qrContent(this.cfg.qrBaseUrl, { idApprl: material.mevDeviceId, noTrans, datTrans: now.datTrans, apresTax: full.mont.apresTax, signature });
+        const qr = qrContent(this.cfg.qrBaseUrl, encryptQrPayload(mevWebCertPem, qrPayload({ idApprl: material.mevDeviceId, noTrans, datTrans: now.datTrans, apresTax: full.mont.apresTax, signature })));
 
         const row = await tx.transaction.create({
           data: {

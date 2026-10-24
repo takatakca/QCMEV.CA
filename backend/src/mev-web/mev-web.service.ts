@@ -75,7 +75,9 @@ export class MevWebService {
     return {
       ENVIRN: this.cfg.envirnHeader,
       ...(this.cfg.mevEnvironment === 'ESSAI' ? { CASESSAI: this.cfg.casEssai } : {}),
-      APPRLINIT: 'SRV',
+      // Mode SEV (SW-76 §4.1.2): QCMEV creates, numbers and signs every transaction and sends it itself. A remote
+      // server (SRV) may only forward transactions made by a SEV, with its own certificate: not what QCMEV is.
+      APPRLINIT: 'SEV',
       IDSEV: s.idSev,
       IDVERSI: s.idVersi,
       CODCERTIF: s.codCertif,

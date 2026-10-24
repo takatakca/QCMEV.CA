@@ -52,7 +52,10 @@ export default function TransactionDetailPage() {
     );
   }
 
-  const qrAt = receipt.text80mm.findIndex((l: string) => l.includes('[CODE QR]'));
+  // The document as Revenu Québec lays it out: the QR on the [CODE QR] line; on an electronic invoice the link right under it.
+  const doc: string[] = receipt.text80mm;
+  const qrAt = doc.findIndex((l: string) => l.includes('[CODE QR]'));
+  const linkAt = doc[qrAt + 1]?.trim() === 'Consulter la transaction en ligne';
   return (
     <Layout>
       <div className="max-w-3xl mx-auto space-y-6">
@@ -85,13 +88,13 @@ export default function TransactionDetailPage() {
 
         <div className="card flex justify-center">
           <div className="font-mono text-xs leading-tight" style={{ width: '42ch' }}>
-            <pre className="whitespace-pre">{receipt.text80mm.slice(0, qrAt).join('\n')}</pre>
+            <pre className="whitespace-pre">{doc.slice(0, qrAt).join('\n')}</pre>
             <div className="flex justify-center my-2">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={receipt.qr.pngDataUrl} alt="Code QR de la transaction" width={160} height={160} />
             </div>
-            <p className="text-center"><a href={receipt.qr.content} className="underline">Consulter la transaction en ligne</a></p>
-            <pre className="whitespace-pre">{receipt.text80mm.slice(qrAt + 2).join('\n')}</pre>
+            {linkAt && <p className="text-center"><a href={receipt.qr.content} className="underline">Consulter la transaction en ligne</a></p>}
+            <pre className="whitespace-pre">{doc.slice(qrAt + (linkAt ? 2 : 1)).join('\n')}</pre>
           </div>
         </div>
       </div>

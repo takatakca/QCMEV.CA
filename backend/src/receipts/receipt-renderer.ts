@@ -1,11 +1,22 @@
 /**
- * Receipt renderer: the exact 80 mm text, an HTML fragment, the QR (SVG and PNG) and renderHash.
+ * Receipt renderer: the exact 80 mm text, the electronic version, an HTML fragment, the QR (SVG and PNG) and renderHash.
  * Food Hub prints these bytes as received and never builds an invoice itself.
  *
- * Mentions (PROVEN, Revenu Québec public pages): « PAIEMENT REÇU », « NOTE DE CRÉDIT », « FACTURE ORIGINALE »,
- * « REPRODUCTION », « ***COPIE DU COMMERÇANT*** » + « NE PAS REMETTRE AU CLIENT », « ***DOCUMENT DE FORMATION*** »,
- * « COMMANDE PAR UNE PLATEFORME NUMÉRIQUE », « Copie électronique », « PAIEMENT NON REÇU ».
- * SPEC: the exact layout, line order and the offline / invalid-certificate wording wait for SW-73.B.
+ * Layout (PROVEN: SW-76 2025-06 §4.4.1 and Revenu Québec's « Exemple de facture – restauration » page):
+ *   before the first "=" line   name and address, moment of transmission (datTrans), transaction number, the items,
+ *                               the subtotal, the TPS and TVQ registration numbers, the payment mode; on a credit note
+ *                               « Crédité à : » and « Date de la remise : » with a line to fill by hand;
+ *   "=" line, then in this order the TPS, the TVQ, the TOTAL, (if any) the tip, the mention (« PAIEMENT REÇU »…),
+ *                               the QR code (on an electronic invoice the link « Consulter la transaction en ligne »
+ *                               right under it), the moment MEV-WEB processed it (psiDatTrans), MEV-WEB's transaction
+ *                               number (psiNoTrans), the device id (IDAPPRL);
+ *   "=" line                    closes the block. The footer (pied de page) carries « REPRODUCTION », and on a merchant
+ *                               copy « ***COPIE DU COMMERÇANT*** » + « NE PAS REMETTRE AU CLIENT » (« Modes d'impression »).
+ * Offline (PROVEN, « Transmission des renseignements exigés », Problème de communication): the missing processing time and
+ * MEV-WEB transaction number are each replaced by « PROBLÈME DE COMMUNICATION ».
+ * Corrections (PROVEN, « Utilisation de références »): « Facture corrigée » / « Note de crédit corrigée ».
+ * Electronic support (PROVEN, « Modes d'impression »): on PEL, the electronic document carries « Copie électronique ».
+ * SPEC: only the invalid-certificate wording and the free-text lines (order number, reference) wait for SW-73.B.
  */
 import * as QRCode from 'qrcode';
 import { sha256Hex } from '../common/canonical-json';
@@ -14,10 +25,14 @@ import { displayDatTrans } from '../common/time';
 
 export const RECEIPT_WIDTH = 42;
 export const LINK_TEXT = 'Consulter la transaction en ligne';
+/** The line where the QR code is printed (the printer or page replaces it with the image). */
+export const QR_MARKER = '[CODE QR]';
 
 export const MENTION = {
   PAID: 'PAIEMENT REÇU',
   CREDIT_NOTE: 'NOTE DE CRÉDIT',
+  CORRECTED_INVOICE: 'Facture corrigée',
+  CORRECTED_CREDIT_NOTE: 'Note de crédit corrigée',
   ORIGINAL: 'FACTURE ORIGINALE',
   REPRODUCTION: 'REPRODUCTION',
   MERCHANT_COPY: '***COPIE DU COMMERÇANT***',
@@ -26,11 +41,14 @@ export const MENTION = {
   PLATFORM: 'COMMANDE PAR UNE PLATEFORME NUMÉRIQUE',
   ELECTRONIC: 'Copie électronique',
   NOT_PAID: 'PAIEMENT NON REÇU',
-  OFFLINE: 'TRANSACTION EN MODE HORS LIGNE', // SPEC
+  COMMUNICATION_PROBLEM: 'PROBLÈME DE COMMUNICATION',
   INVALID_CERT: '*** CERTIFICAT INVALIDE ***', // SPEC
   ESTIMATE: 'ESTIMATION DES RENSEIGNEMENTS',
   QUOTE: 'SOUMISSION',
 } as const;
+
+/** Mentions printed in the footer, after the closing "=" line. Every other mention goes inside the block. */
+const FOOTER_MENTIONS: readonly string[] = [MENTION.REPRODUCTION, MENTION.MERCHANT_COPY, MENTION.DO_NOT_GIVE, MENTION.TRAINING, MENTION.ELECTRONIC];
 
 const PAYMENT_LABEL: Record<string, string> = {
   ARG: 'Argent comptant',
@@ -74,36 +92,58 @@ export interface ReceiptInput {
   totalCents: number;
   tipCents?: number | null;
   reference?: { noTrans: string; datTrans: string } | null;
+  /** Set when this document corrects an earlier closing receipt (RECEIPT) or credit note (CREDIT_NOTE). */
+  corrects?: 'RECEIPT' | 'CREDIT_NOTE' | null;
+  /** Credit note: the customer's name, when known (otherwise a line to fill by hand). */
+  creditedTo?: string | null;
   mevStatus: string;
+  /** MEV-WEB's processing time (psiDatTrans) and transaction number (psiNoTrans). */
+  mevProcessedAt?: string | null;
   mevTransactionNumber?: string | null;
   certificateInvalid?: boolean;
   qrContent: string;
 }
 
-export interface RenderedReceipt {
+export interface RenderedDocument {
   mentions: string[];
-  text80mm: string[];
+  /** 42 columns; the QR code goes on the line equal to center(QR_MARKER). */
+  lines: string[];
   html: string;
+}
+
+export interface RenderedReceipt {
+  /** Mentions of the main document (the paper one, or the electronic one when there is no paper). */
+  mentions: string[];
+  /** The main document: printed exactly as is (the QR on the [CODE QR] line). */
+  text80mm: string[];
+  /** HTML fragment of the main document, QR in place (and the link under it when the document is electronic). */
+  html: string;
+  /** The electronic document (formImpr ELE or PEL): « Copie électronique » on PEL, the link under the QR. */
+  electronic: RenderedDocument | null;
   qr: { content: string; svg: string; pngDataUrl: string };
   renderHash: string;
 }
 
-export function receiptMentions(r: ReceiptInput): string[] {
+const isOffline = (r: ReceiptInput) => r.mevStatus === 'OFFLINE_PENDING' || r.mevStatus === 'RETRY_BATCH';
+
+/** The mentions of one document. `electronic` = the version produced on electronic support. */
+export function receiptMentions(r: ReceiptInput, electronic = r.formImpr === 'ELE'): string[] {
   const m: string[] = [];
-  if (r.modTrans === 'FOR') m.push(MENTION.TRAINING, MENTION.DO_NOT_GIVE);
-  if (r.modImpr === 'DUP') {
-    m.push(MENTION.MERCHANT_COPY, MENTION.DO_NOT_GIVE);
-    if (r.modPai === 'AUC' && r.totalCents !== 0) m.push(MENTION.NOT_PAID);
-  }
-  if (r.modImpr === 'RPR') m.push(MENTION.REPRODUCTION);
+  const notPaid = r.modImpr === 'PSP' || (r.modImpr === 'DUP' && r.modPai === 'AUC' && r.totalCents !== 0);
   if (r.typTrans === 'ADDI') m.push(MENTION.ORIGINAL);
   if (r.typTrans === 'ESTM') m.push(MENTION.ESTIMATE);
   if (r.typTrans === 'SOUM') m.push(MENTION.QUOTE);
-  if (r.typTrans === 'RFER') m.push(r.documentKind === 'CREDIT_NOTE' ? MENTION.CREDIT_NOTE : MENTION.PAID);
+  if (r.typTrans === 'RFER') m.push(r.documentKind === 'CREDIT_NOTE' ? MENTION.CREDIT_NOTE : notPaid ? MENTION.NOT_PAID : MENTION.PAID);
+  if (r.corrects === 'RECEIPT') m.push(MENTION.CORRECTED_INVOICE);
+  if (r.corrects === 'CREDIT_NOTE') m.push(MENTION.CORRECTED_CREDIT_NOTE);
   if (r.typServ === 'LVT') m.push(MENTION.PLATFORM);
-  if (r.formImpr === 'ELE' || r.formImpr === 'PEL') m.push(MENTION.ELECTRONIC);
-  if (r.mevStatus === 'OFFLINE_PENDING' || r.mevStatus === 'RETRY_BATCH') m.push(MENTION.OFFLINE);
   if (r.certificateInvalid) m.push(MENTION.INVALID_CERT);
+  if (isOffline(r) || !r.mevTransactionNumber) m.push(MENTION.COMMUNICATION_PROBLEM);
+  // Footer
+  if (r.modImpr === 'RPR') m.push(MENTION.REPRODUCTION);
+  if (r.modImpr === 'DUP') m.push(MENTION.MERCHANT_COPY, MENTION.DO_NOT_GIVE);
+  if (r.modTrans === 'FOR') m.push(MENTION.TRAINING, MENTION.DO_NOT_GIVE);
+  if (electronic && r.formImpr === 'PEL') m.push(MENTION.ELECTRONIC);
   return [...new Set(m)];
 }
 
@@ -130,25 +170,26 @@ function wrap(s: string, indent = ''): string[] {
   return out;
 }
 
-export function renderText(r: ReceiptInput, mentions: string[]): string[] {
+/** psiDatTrans as printed: AAAAMMJJhhmmss → "AAAA-MM-JJ hh:mm:ss"; any other format as received. */
+export function displayProcessedAt(v: string): string {
+  return /^\d{14}$/.test(v) ? displayDatTrans(v) : v;
+}
+
+export const QR_LINE = center(QR_MARKER);
+
+export function renderText(r: ReceiptInput, mentions: string[], electronic = false): string[] {
   const L: string[] = [];
   const rule = '='.repeat(RECEIPT_WIDTH);
   const dash = '-'.repeat(RECEIPT_WIDTH);
-  const headerSet: string[] = [MENTION.TRAINING, MENTION.MERCHANT_COPY, MENTION.DO_NOT_GIVE, MENTION.INVALID_CERT];
-  const header = mentions.filter((m) => headerSet.includes(m));
-  if (header.length) {
-    L.push(rule);
-    header.forEach((m) => L.push(center(m)));
-    L.push(rule);
-  }
+  const creditNote = r.documentKind === 'CREDIT_NOTE';
+
+  // ── Before the first "=" line ──
   L.push(...wrap(r.merchant.name).map(center));
   if (r.merchant.address) L.push(...wrap(r.merchant.address).map(center));
   if (r.merchant.city) L.push(center(r.merchant.city));
-  L.push(`TPS : ${r.merchant.noTPS}`);
-  L.push(`TVQ : ${r.merchant.noTVQ}`);
   L.push(dash);
   L.push(`Date : ${displayDatTrans(r.datTrans)} (${r.utc})`);
-  L.push(leftRight(`Transaction : ${r.noTrans}`, `App. ${r.deviceId}`));
+  L.push(`Transaction : ${r.noTrans}`);
   if (r.externalRef) L.push(...wrap(`Commande : ${r.externalRef}`));
   if (r.reference) L.push(...wrap(`Réf. : transaction ${r.reference.noTrans} du ${displayDatTrans(r.reference.datTrans)}`));
   L.push(dash);
@@ -158,50 +199,84 @@ export function renderText(r: ReceiptInput, mentions: string[]): string[] {
   }
   L.push(dash);
   L.push(leftRight('Sous-total', receiptAmount(r.subtotalCents)));
-  L.push(leftRight(`TPS ${TPS_RATE_LABEL}`, receiptAmount(r.tpsCents)));
-  L.push(leftRight(`TVQ ${TVQ_RATE_LABEL}`, receiptAmount(r.tvqCents)));
-  L.push(leftRight('TOTAL', receiptAmount(r.totalCents)));
-  if (r.tipCents) L.push(leftRight('Pourboire', receiptAmount(r.tipCents)));
+  L.push(`No TPS : ${r.merchant.noTPS}`);
+  L.push(`No TVQ : ${r.merchant.noTVQ}`);
   L.push(`Paiement : ${PAYMENT_LABEL[r.modPai] ?? r.modPai}`);
-  const footer = mentions.filter((m) => !headerSet.includes(m));
-  if (footer.length) {
-    L.push(rule);
-    footer.forEach((m) => L.push(...wrap(m).map(center)));
+  if (creditNote) {
+    L.push(r.creditedTo ? `Crédité à : ${r.creditedTo}`.slice(0, RECEIPT_WIDTH) : `Crédité à : ${'_'.repeat(RECEIPT_WIDTH - 12)}`);
+    L.push(`Date de la remise : ${'_'.repeat(RECEIPT_WIDTH - 20)}`);
   }
+
+  // ── The block, in Revenu Québec's order ──
   L.push(rule);
-  L.push(center('[CODE QR]'));
-  L.push(center(LINK_TEXT));
-  if (r.mevTransactionNumber) L.push(center(`No MEV : ${r.mevTransactionNumber}`));
+  L.push(leftRight(`TPS ${TPS_RATE_LABEL} :`, receiptAmount(r.tpsCents)));
+  L.push(leftRight(`TVQ ${TVQ_RATE_LABEL} :`, receiptAmount(r.tvqCents)));
+  L.push(leftRight('TOTAL :', receiptAmount(r.totalCents)));
+  if (r.tipCents) L.push(leftRight('Pourboire :', receiptAmount(r.tipCents)));
+  const inBlock = mentions.filter((m) => !FOOTER_MENTIONS.includes(m) && m !== MENTION.COMMUNICATION_PROBLEM);
+  inBlock.forEach((m) => L.push(...wrap(m).map(center)));
+  L.push(QR_LINE);
+  if (electronic) L.push(center(LINK_TEXT));
+  const offline = isOffline(r) || !r.mevTransactionNumber;
+  L.push(center(offline || !r.mevProcessedAt ? MENTION.COMMUNICATION_PROBLEM : displayProcessedAt(r.mevProcessedAt)));
+  L.push(center(offline ? MENTION.COMMUNICATION_PROBLEM : (r.mevTransactionNumber as string)));
+  L.push(center(r.deviceId));
   L.push(rule);
+
+  // ── Footer ──
+  mentions.filter((m) => FOOTER_MENTIONS.includes(m)).forEach((m) => L.push(...wrap(m).map(center)));
   return L;
 }
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-export async function renderReceipt(r: ReceiptInput): Promise<RenderedReceipt> {
-  const mentions = receiptMentions(r);
-  const text80mm = renderText(r, mentions);
-  const svg = await QRCode.toString(r.qrContent, { type: 'svg', errorCorrectionLevel: 'M', margin: 1 });
-  const pngDataUrl = await QRCode.toDataURL(r.qrContent, { errorCorrectionLevel: 'M', margin: 1, width: 240 });
-  const qrIndex = text80mm.indexOf(center('[CODE QR]'));
-  const before = text80mm.slice(0, qrIndex).map(esc).join('\n');
-  const after = text80mm.slice(qrIndex + 2).map(esc).join('\n');
-  const html = [
+function htmlOf(lines: string[], svg: string, link: string | null): string {
+  const at = lines.indexOf(QR_LINE);
+  const before = (at >= 0 ? lines.slice(0, at) : lines).map(esc).join('\n');
+  let rest = at >= 0 ? lines.slice(at + 1) : [];
+  if (link && rest[0]?.trim() === LINK_TEXT) rest = rest.slice(1);
+  return [
     '<div class="qcmev-receipt" style="font-family:monospace;white-space:pre;width:42ch">',
     `<pre style="margin:0">${before}</pre>`,
     `<div class="qcmev-qr" style="width:42ch;text-align:center">${svg}</div>`,
-    `<p style="margin:0;text-align:center"><a href="${esc(r.qrContent)}">${esc(LINK_TEXT)}</a></p>`,
-    `<pre style="margin:0">${after}</pre>`,
+    link ? `<p style="margin:0;text-align:center"><a href="${esc(link)}">${esc(LINK_TEXT)}</a></p>` : '',
+    `<pre style="margin:0">${rest.map(esc).join('\n')}</pre>`,
     '</div>',
   ].join('');
-  return { mentions, text80mm, html, qr: { content: r.qrContent, svg, pngDataUrl }, renderHash: sha256Hex(text80mm.join('\n')) };
+}
+
+export async function renderReceipt(r: ReceiptInput): Promise<RenderedReceipt> {
+  const svg = await QRCode.toString(r.qrContent, { type: 'svg', errorCorrectionLevel: 'M', margin: 1 });
+  const pngDataUrl = await QRCode.toDataURL(r.qrContent, { errorCorrectionLevel: 'M', margin: 1, width: 240 });
+  const hasElectronic = r.formImpr === 'ELE' || r.formImpr === 'PEL';
+  let electronic: RenderedDocument | null = null;
+  if (hasElectronic) {
+    const mentions = receiptMentions(r, true);
+    const lines = renderText(r, mentions, true);
+    electronic = { mentions, lines, html: htmlOf(lines, svg, r.qrContent) };
+  }
+  // Main document: the paper one (PAP, PEL, or NON as a record), the electronic one when there is no paper (ELE).
+  const main: RenderedDocument = r.formImpr === 'ELE' && electronic
+    ? electronic
+    : (() => { const mentions = receiptMentions(r, false); const lines = renderText(r, mentions, false); return { mentions, lines, html: htmlOf(lines, svg, null) }; })();
+  return {
+    mentions: main.mentions,
+    text80mm: main.lines,
+    html: main.html,
+    electronic,
+    qr: { content: r.qrContent, svg, pngDataUrl },
+    renderHash: sha256Hex(main.lines.join('\n')),
+  };
 }
 
 /**
- * QR content. SPEC: the official content (2022 sample: a qr.mev-web.ca link with an "f" parameter) waits for SW-73.
- * Here: <MEV_QR_BASE_URL>?f=<base64url of {a: IDAPPRL, n: noTrans, d: datTrans, m: apresTax, s: start of signature}>.
+ * QR content: <MEV_QR_BASE_URL>?f=<data encrypted with MEV-WEB's certificate> (SW-76 §4.2.1; scheme SPEC, see
+ * crypto/qr-crypto.ts). The data: {a: IDAPPRL, n: noTrans, d: datTrans, m: apresTax, s: start of the signature} (SPEC).
  */
-export function qrContent(baseUrl: string, f: { idApprl: string; noTrans: string; datTrans: string; apresTax: string; signature: string }): string {
-  const payload = Buffer.from(JSON.stringify({ a: f.idApprl, n: f.noTrans, d: f.datTrans, m: f.apresTax, s: f.signature.slice(0, 12) })).toString('base64url');
-  return `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}f=${payload}`;
+export function qrPayload(f: { idApprl: string; noTrans: string; datTrans: string; apresTax: string; signature: string }): string {
+  return JSON.stringify({ a: f.idApprl, n: f.noTrans, d: f.datTrans, m: f.apresTax, s: f.signature.slice(0, 12) });
+}
+
+export function qrContent(baseUrl: string, encryptedPayload: string): string {
+  return `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}f=${encodeURIComponent(encryptedPayload)}`;
 }

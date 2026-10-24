@@ -56,7 +56,8 @@ export class CertificatesService {
     await this.audit.log({ operatorId, eventType: AuditEventType.CERTIFICATE_REQUESTED, deviceId, description: `CRT AJO for device ${device.serialNumber}` });
     const res = await this.mevWeb.certificateRequest({ id: op.id, noTPS: op.noTPS, noTVQ: op.noTVQ }, authorizationCode, 'AJO', csrBody(csrPem));
     const r = res?.retourCertif ?? {};
-    if (classifyErrors(r.listErr) !== 'accepted' || !r.certif || !r.idApprl) {
+    // SW-76 §4.2.1: the answer carries two certificates (ours, and MEV-WEB's for the QR code); both are required.
+    if (classifyErrors(r.listErr) !== 'accepted' || !r.certif || !r.certifPSI || !r.idApprl) {
       await this.audit.log({ operatorId, eventType: AuditEventType.MEV_ERROR, severity: LogSeverity.ERROR, deviceId, description: 'CRT refused', metadata: { errors: r.listErr ?? [] } });
       throw new UnprocessableEntityException({ status: 'rejected', errors: r.listErr ?? [{ id: 'CRT', mess: 'no certificate in the answer', codRetour: '99' }] });
     }
@@ -86,8 +87,8 @@ export class CertificatesService {
           isActive: true,
         },
       });
-      if (r.certifPSI) {
-        const mevPem = this.toPem(r.certifPSI);
+      {
+        const mevPem = this.toPem(r.certifPSI as string);
         const mx = new crypto.X509Certificate(mevPem);
         await tx.certificate.create({
           data: {
@@ -125,10 +126,16 @@ export class CertificatesService {
     return { privateKey, certPem: cert.pemCertificate, thumbprint: cert.thumbprint, mevDeviceId: device.mevDeviceId, validUntil: cert.validUntil, expired };
   }
 
+  /** MEV-WEB's certificate (certifPSI) of the device: it encrypts the QR link data (SW-76 §4.2.1). */
+  async mevWebCertificate(deviceId: string): Promise<string | null> {
+    const cert = await this.prisma.certificate.findFirst({ where: { deviceId, type: CertificateType.MEV_WEB, isActive: true }, orderBy: { createdAt: 'desc' } });
+    return cert?.pemCertificate ?? null;
+  }
+
   async readiness(deviceId: string): Promise<DeviceReadiness> {
     const device = await this.prisma.device.findUnique({ where: { id: deviceId } });
     const cert = await this.prisma.certificate.findFirst({ where: { deviceId, type: CertificateType.SEV, isActive: true }, orderBy: { createdAt: 'desc' } });
-    const certReady = !!cert && !!device?.mevDeviceId && (!cert.validUntil || cert.validUntil.getTime() > Date.now());
+    const certReady = !!cert && !!device?.mevDeviceId && (!cert.validUntil || cert.validUntil.getTime() > Date.now()) && !!(await this.mevWebCertificate(deviceId));
     return { deviceReady: !!device?.isActive && !!device.fileNumber, certReady, certificateValidUntil: cert?.validUntil ?? null };
   }
 

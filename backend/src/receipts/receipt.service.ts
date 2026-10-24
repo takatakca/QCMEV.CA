@@ -15,6 +15,18 @@ export interface ReceiptObject extends RenderedReceipt {
   issuedAt: string;
 }
 
+/**
+ * « Facture corrigée » / « Note de crédit corrigée » (PROVEN, « Utilisation de références »): a new closing receipt that
+ * references an earlier closing receipt (the credited one it replaces), or a credit note that references a credit note.
+ * A credit note of a receipt, a reproduction or a duplicate is not a correction.
+ */
+export function correctionOf(tx: { transactionType: string; printMode: string; documentKind: string; related?: { transactionType: string; documentKind: string } | null }): 'RECEIPT' | 'CREDIT_NOTE' | null {
+  const r = tx.related;
+  if (!r || tx.transactionType !== 'RFER' || tx.printMode !== 'FAC' || r.transactionType !== 'RFER') return null;
+  if (tx.documentKind === 'CREDIT_NOTE') return r.documentKind === 'CREDIT_NOTE' ? 'CREDIT_NOTE' : null;
+  return r.documentKind === 'CREDIT_NOTE' ? null : 'RECEIPT';
+}
+
 @Injectable()
 export class ReceiptService {
   constructor(private readonly prisma: PrismaService) {}
@@ -51,7 +63,9 @@ export class ReceiptService {
       totalCents: tx.totalCents,
       tipCents: tx.tipCents,
       reference: tx.related ? { noTrans: tx.related.noTrans, datTrans: tx.related.datTrans } : null,
+      corrects: correctionOf(tx),
       mevStatus: tx.mevStatus,
+      mevProcessedAt: tx.mevProcessedAt,
       mevTransactionNumber: tx.mevTransactionNumber,
       certificateInvalid,
       qrContent: tx.qrContent ?? '',

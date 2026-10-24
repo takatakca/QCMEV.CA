@@ -1,5 +1,5 @@
 /**
- * Devices (one per establishment in remote-server mode) and their certificates.
+ * Devices (one SEV device per establishment, mode SEV) and their certificates.
  * Every route checks that the device belongs to the caller's operator. Identity values are never returned.
  */
 import { BadRequestException, Body, Controller, Get, HttpCode, Injectable, NotFoundException, Param, Post, Put, UseGuards } from '@nestjs/common';

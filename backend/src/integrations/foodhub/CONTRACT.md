@@ -2,7 +2,7 @@
 
 Public document: it contains **no secret, no identity value, no authorization code**. Examples use obvious placeholders.
 
-QCMEV ("Takatak MEV") is the sales recording system (SEV) in remote-server mode (`APPRLINIT=SRV`). It is the only
+QCMEV ("Takatak MEV") is the sales recording system (SEV), in mode SEV (`APPRLINIT=SEV`, SW-76 §4.1.2). It is the only
 part that numbers, signs, sends to WEB-SRM (MEV-WEB) and lays out the invoice. Food Hub takes the orders like a terminal
 of that SEV: it never signs, never talks to Revenu Québec, and prints **only** the exact text and QR code QCMEV returns.
 
@@ -156,7 +156,21 @@ WEB-SRM error classes: a `codRetour` ending in 0, 1 or 5 means "not recorded": Q
 
 `qcmevTransactionId`, `noTrans`, `datTrans`, `utc`, `deviceId` (IDAPPRL), `mevStatus`, `mevProcessedAt`,
 `mevTransactionNumber`, `qr {content, svg, pngDataUrl}`, `mentions[]`, `text80mm[]` (42 columns, exact lines including the
-`=====` blocks), `html`, `renderHash = sha256(text80mm joined by "\n")`, `issuedAt`.
+`=====` blocks), `html`, `electronic` (`null`, or for `ELE` / `PEL`: `{mentions[], lines[], html}`),
+`renderHash = sha256(text80mm joined by "\n")`, `issuedAt`.
+
+Layout (Revenu Québec, SW-76 §4.4.1 and « Exemple de facture – restauration »): name and address, date and number,
+items, subtotal, TPS / TVQ registration numbers, payment mode (credit note: « Crédité à : » and « Date de la remise : »),
+then a `=` line, TPS, TVQ, TOTAL, tip, the mentions, the line `[CODE QR]` (print the QR there), the processing time
+(`mevProcessedAt`), the MEV-WEB number, the device id, and a closing `=` line; « REPRODUCTION » and the merchant-copy
+mentions follow it. Offline: the processing time and the MEV-WEB number each read « PROBLÈME DE COMMUNICATION ».
+A corrected receipt (`referenceSaleKey` to a credited sale) says « Facture corrigée ».
+
+`text80mm` is the paper document (no link). `electronic.lines` has « Consulter la transaction en ligne » on the line
+right after `[CODE QR]`: render it as the hyperlink (`qr.content`) under the QR image; on `PEL` it also says
+« Copie électronique ». A terminal shows the electronic document only for `ELE` / `PEL`, and prints each document
+once: any further copy is an `RPR` or `DUP` asked through `/prints` (« Modes d'impression »: an invoice is printed or
+sent only once).
 
 The receipt text carries the merchant's TPS and TVQ registration numbers, as every invoice does. It never carries the
 NEQ, the mandatory-billing file number or the authorization code.
@@ -165,8 +179,8 @@ NEQ, the mandatory-billing file number or the authorization code.
 
 * QCMEV unreachable: the order waits in Food Hub's outbox; the kitchen ticket says « FACTURE À VENIR / NE PAS REMETTRE
   AU CLIENT »; Food Hub never makes an invoice itself.
-* WEB-SRM unreachable: QCMEV signs locally and answers `offline_pending` with a receipt, a QR and the offline mention (SPEC
-  wording); it sends the batch (`transLot`) every `MEV_OFFLINE_FLUSH_SECONDS` once WEB-SRM is back. A network error is
+* WEB-SRM unreachable: QCMEV signs locally and answers `offline_pending` with a receipt and a QR; the processing time and
+  the MEV-WEB number are each replaced by « PROBLÈME DE COMMUNICATION » (PROVEN); it sends the batch (`transLot`) every `MEV_OFFLINE_FLUSH_SECONDS` once WEB-SRM is back. A network error is
   never stored as a rejection.
 * 48-hour legal limit: QCMEV writes a WARNING audit event at 6 h and CRITICAL at 24 h and at 48 h; Food Hub alerts at
   15 minutes pending.

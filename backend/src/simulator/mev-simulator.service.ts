@@ -15,6 +15,7 @@ import { computeTaxes } from '../common/money';
 import { civilTime } from '../common/time';
 import { certThumbprint, FIRST_PRECED, SIGNATURE_RE, transactionSignedString, verifyP256 } from '../crypto/ecdsa';
 import { P256_ALG } from '../crypto/csr';
+import { decryptQrPayload } from '../crypto/qr-crypto';
 import type { MevError, TransActu } from '../mev-web/mev-web.types';
 import { SimulatorStore } from './simulator-state';
 
@@ -82,7 +83,9 @@ export class MevSimulatorService {
   private checkHeaders(h: Record<string, string | undefined>, needDevice: boolean): MevError[] {
     const errors: MevError[] = [];
     if (!['DEV', 'ESSAI'].includes(h.envirn ?? '')) errors.push(err('ENVIRN', 'ENVIRN must be DEV or ESSAI for the simulator'));
-    if (h.apprlinit !== 'SRV') errors.push(err('APPRLINIT', 'APPRLINIT must be SRV (remote server mode)'));
+    // QCMEV creates, numbers and signs its own transactions: it is a SEV talking to MEV-WEB directly (mode SEV, SW-76
+    // §4.1.2). "SRV" is for a remote server that only forwards transactions and has its own certificate.
+    if (h.apprlinit !== 'SEV') errors.push(err('APPRLINIT', 'APPRLINIT must be SEV (QCMEV runs in mode SEV)'));
     for (const k of ['idsev', 'idversi', 'codcertif', 'idpartn', 'versi', 'versiparn']) {
       if (!h[k]) errors.push(err(k.toUpperCase(), `header ${k.toUpperCase()} is missing`));
     }
@@ -266,9 +269,12 @@ export class MevSimulatorService {
     return { status: 200, body: { retourDoc: { noDoc: `SIMDOC${String(s.docs).padStart(6, '0')}`, listErr: [] } } };
   }
 
+  /** The QR link data, decrypted with MEV-WEB's (here: the simulator CA's) private key. */
   lookupQr(f: string): Record<string, string> | null {
     try {
-      const data = JSON.parse(Buffer.from(f, 'base64url').toString('utf8')) as { a: string; n: string; d: string };
+      const ca = this.store.get().ca;
+      if (!ca) return null;
+      const data = JSON.parse(decryptQrPayload(ca.keyPem, f)) as { a: string; n: string; d: string };
       const tx = this.store.get().transactions[`${data.a}|${data.d.slice(0, 8)}|${data.n}`];
       return tx ? { ...tx } : { pending: 'not received yet', ...data };
     } catch {

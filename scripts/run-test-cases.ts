@@ -154,7 +154,7 @@ async function main() {
       const b = await sale(deviceId, [item('Hors ligne B', 1100)]);
       checkSigned(a); checkSigned(b);
       assert(a.mevStatus === 'OFFLINE_PENDING' && b.mevStatus === 'OFFLINE_PENDING', `expected OFFLINE_PENDING, got ${a.mevStatus}/${b.mevStatus}`);
-      assert(a.receipt.mentions.some((m: string) => m.includes('HORS LIGNE')), 'offline mention missing');
+      assert(a.receipt.mentions.includes('PROBLÈME DE COMMUNICATION'), 'offline mention missing');
       const st = await api('GET', `/devices/${deviceId}/offline-status`);
       assert(st.offlineMode === true && st.pendingCount >= 2, 'device must be in offline mode with 2+ queued');
       signed.push(a, b);

@@ -18,9 +18,10 @@ None of them can be proven with our own simulator.
 | 9 | Certificate revocation / renewal | Local deactivation only; CRT `SUP` / `REM` with the 40-character `noSerie` not sent yet | `certificates.service.ts` | SW-73 |
 | 10 | UTL body | `reqUtil{modif AJO/SUP/VAL, nomUtil, noTax=TVQ number}`; users registered on every certified device | `operators/operators.ts` | SW-73 |
 | 11 | DOC RUT body | `reqDoc{typDoc RUT, noDossFO, noTPS, noTVQ, annee, datDoc, sommVentes, sommVentesAnt}` | `reports/reports.ts` | SW-73.D |
-| 12 | QR code content | `<MEV_QR_BASE_URL>?f=<base64url {a, n, d, m, s}>`; the 2022 sample uses a `qr.mev-web.ca` link with an `f` parameter | `receipts/receipt-renderer.ts` | SW-73.B |
-| 13 | Receipt layout | 42 columns, `=====` blocks, PROVEN mentions; exact line order unknown | `receipts/receipt-renderer.ts` | SW-73.B |
-| 14 | Offline mention and invalid-certificate mention | « TRANSACTION EN MODE HORS LIGNE », « *** CERTIFICAT INVALIDE *** » | `receipts/receipt-renderer.ts` | SW-73.B |
+| 12 | QR code content | `<MEV_QR_BASE_URL>?f=<{a, n, d, m, s} encrypted with MEV-WEB's certificate>` (encryption PROVEN: SW-76 §4.2.1; scheme SPEC: ECDH P-256 + HKDF-SHA256 + AES-256-GCM, or RSA-OAEP-SHA256); the 2022 sample uses a `qr.mev-web.ca` link with an `f` parameter | `crypto/qr-crypto.ts`, `receipts/receipt-renderer.ts` | SW-73.B |
+| 13 | Receipt layout | The order of the block is PROVEN (SW-76 §4.4.1, « Exemple de facture »). Still SPEC: the free-text lines (order number, reference), the wording of each label | `receipts/receipt-renderer.ts` | SW-73.B |
+| 14 | Invalid-certificate mention | « *** CERTIFICAT INVALIDE *** » (the offline wording « PROBLÈME DE COMMUNICATION » is PROVEN) | `receipts/receipt-renderer.ts` | SW-73.B |
+| 26 | Non-exportable SEV key | Software keys (AES-sealed in the database); PROD refused | `config/app-config.ts`, `crypto/csr.ts` | owner decision (KMS / HSM) |
 | 15 | Modifiers ("précisions") | Sent as their own lines prefixed with "+" | `trans-builder.ts` | SW-73.A |
 | 16 | Restaurant-funded discount | Negative "Rabais" line inside `avantTax` (alternative: `mont.ajus`) | `foodhub.contract.ts` | SW-73.A / RQ answer |
 | 17 | Payment codes | `ARG, CHQ, CRE, DEB, CPR, MIX, AUT, INC, AUC`; codes for coupon, loyalty, crypto, e-wallet, transfer, "porté au compte" not offered | `prisma/schema.prisma` | SW-73.A |

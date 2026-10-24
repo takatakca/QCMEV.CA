@@ -40,9 +40,10 @@ describe('configuration: no default secret, the environment really decides', () 
     expect(essai.simulatorEnabled).toBe(false);
     expect(essai.envirnHeader).toBe('ESSAI');
     expect(() => loadConfig({ ...good(), MEV_ENVIRONMENT: 'ESSAI', MEV_WEB_BASE_URL: 'https://example.invalid' })).toThrow(ConfigError);
-    const prod = loadConfig({ ...good(), ...ids, MEV_ENVIRONMENT: 'PROD', QCMEV_CERTIFICATION_NUMBER: 'TEST-NUMBER' });
-    expect(prod.simulatorEnabled).toBe(false);
-    expect(prod.certified).toBe(true);
+    // Even certified, PROD waits for a non-exportable key custody (SW-76 §4.2.1).
+    expect(() => loadConfig({ ...good(), ...ids, MEV_ENVIRONMENT: 'PROD', QCMEV_CERTIFICATION_NUMBER: 'TEST-NUMBER' })).toThrow(/non-exportable/);
+    expect(() => loadConfig({ ...good(), SEV_KEY_CUSTODY: 'hsm' })).toThrow(/not built/);
+    expect(essai.keyCustody).toBe('software');
   });
 
   it('refuses an unknown environment and the Food Hub switch without a strong secret', () => {

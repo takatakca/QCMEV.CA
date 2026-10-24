@@ -1,7 +1,7 @@
 # Takatak MEV (QCMEV)
 
 Sales recording system (SEV, « système d'enregistrement des ventes ») for Québec restaurants, built to talk to Revenu
-Québec's WEB-SRM (MEV-WEB) in remote-server mode, and to receive the orders of TAKATAK Food Hub (Uber Eats, DoorDash,
+Québec's WEB-SRM (MEV-WEB) in mode SEV (it creates and signs its own transactions), and to receive the orders of TAKATAK Food Hub (Uber Eats, DoorDash,
 SkipTheDishes, Too Good To Go, website, phone, storefront).
 
 > **Status: NOT certified by Revenu Québec. Simulator / DEV only.**
@@ -150,11 +150,12 @@ Food Hub end-to-end checks, a Docker-free local run, production Dockerfiles, Nex
 2. SW-73 / SW-73.A / SW-73.B / SW-73.D → close every row of `SPEC_GAPS.md` (URLs, nesting, formats, signed string, QR,
    receipt layout, CSR subject).
 3. The personalized SW-77 test cases → import them, run in `DEV`, then `ESSAI` (`MEV_CASESSAI`), keep the logs.
-4. Certification number and the production remote-server authorization code (FO-350.SD) → only then `PROD`.
+4. Certification number, the production authorization code of the SEV, and a non-exportable key custody (SW-76 §4.2.1;
+   KMS / HSM, not built) → only then `PROD`.
 
 **Still to build (no Revenu Québec dependency):** Food Hub side of the contract (foodhubca branch
-`feature/mev-qcmev`: outbox, hooks, ticket printing, `/r/{token}`); certificate renewal / revocation with `noSerie`;
-« Facture corrigée » mention; `ANN` / `PSP` workflows; instalments; the dashboard pages for users and the RUT report
+`feature/mev-qcmev-integration`, PR takatakca/foodhubca#99); certificate renewal / revocation with `noSerie`;
+a non-exportable key custody (KMS / HSM); `ANN` / `PSP` workflows; instalments; the dashboard pages for users and the RUT report
 need polish; LICENSE (owner's choice).
 
 **Owner decisions pending:** the license (no LICENSE file yet: until the owner adds one, no license is granted).

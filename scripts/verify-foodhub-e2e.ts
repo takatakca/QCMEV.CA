@@ -94,7 +94,7 @@ const line = (description: string, unitPriceCents: number, quantity = '1', extra
 
 function sale(o: {
   id: string; channel: string; serviceType: string; lines: any[]; loc?: string; ecommerce?: boolean; mode?: string; collectedBy?: string;
-  deliveryCents?: number; serviceFeeCents?: number; discountCents?: number; tipCents?: number; gst?: number; qst?: number; referenceSaleKey?: string; model?: string;
+  deliveryCents?: number; serviceFeeCents?: number; discountCents?: number; tipCents?: number; gst?: number; qst?: number; referenceSaleKey?: string; model?: string; format?: string;
 }) {
   const model = o.model ?? (['website', 'phone', 'storefront'].includes(o.channel) ? 'direct' : 'stored');
   const linesTotal = o.lines.reduce((s, l) => s + l.totalCents + (l.modifiers ?? []).reduce((m: number, x: any) => m + x.totalCents, 0), 0);
@@ -116,7 +116,7 @@ function sale(o: {
     discountCents: o.discountCents ?? 0,
     amounts: { subtotalCents: subtotal, gstCents: gst, qstCents: qst, totalCents: subtotal + gst + qst, tipCents: o.tipCents ?? 0 },
     payment: { mode: o.mode ?? 'AUT', collectedBy: o.collectedBy ?? 'platform' },
-    receipt: { format: 'PAP', deliver: 'print' },
+    receipt: { format: o.format ?? 'PAP', deliver: o.format === 'PEL' ? 'email' : 'print' },
     testMode: false,
     ...(o.referenceSaleKey ? { referenceSaleKey: o.referenceSaleKey } : {}),
   };
@@ -153,6 +153,23 @@ async function phaseMain(): Promise<Record<string, unknown>> {
   check('S1', 'Uber delivery → LVT accepted, courier tip and platform fee excluded, platform mention', r1.status === 200 && r1.body.status === 'accepted'
     && r1.body.amounts.tipCents === 0 && r1.body.warnings.includes('tipExcluded') && r1.body.warnings.includes('deliveryFeeExcluded')
     && r1.body.receipt.mentions.includes('COMMANDE PAR UNE PLATEFORME NUMÉRIQUE') && !r1.body.receipt.text80mm.some((l: string) => l.includes('Pourboire')), JSON.stringify(r1.body).slice(0, 400));
+  {
+    // L1 — Revenu Québec's layout: two "=" lines framing TPS, TVQ, TOTAL, mention, QR, processing time, MEV-WEB number, device id.
+    const t: string[] = r1.body.receipt?.text80mm ?? [];
+    const rule = '='.repeat(42);
+    const a = t.indexOf(rule);
+    const b = t.indexOf(rule, a + 1);
+    const blk = t.slice(a + 1, b).map((l) => l.trim());
+    const q = blk.indexOf('[CODE QR]');
+    check('L1', 'receipt layout: 2 "=" lines; TPS, TVQ, TOTAL first; QR, then psiDatTrans, psiNoTrans, IDAPPRL', t.filter((l) => l === rule).length === 2
+      && blk[0]?.startsWith('TPS') && blk[1]?.startsWith('TVQ') && blk[2]?.startsWith('TOTAL') && q > 2
+      && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(blk[q + 1] ?? '') && blk[q + 2] === r1.body.receipt.mevTransactionNumber && blk[q + 3] === r1.body.receipt.deviceId
+      && b === t.length - 1, JSON.stringify(blk));
+    // Q1 — the QR link data is encrypted with MEV-WEB's certificate: nothing readable in the URL.
+    const f = new URL(r1.body.receipt.qr.content).searchParams.get('f') ?? '';
+    check('Q1', 'QR link data encrypted with the MEV-WEB certificate (no device id, number or amount in clear)', /^e1\./.test(f)
+      && !f.includes(r1.body.receipt.deviceId) && !Buffer.from(f.slice(3), 'base64url').toString('latin1').includes(r1.body.receipt.datTrans), f.slice(0, 40));
+  }
 
   // S8 — the same webhook delivered 3 times → one transaction, identical answers.
   const r1b = await call('POST', '/sales', s1);
@@ -172,10 +189,11 @@ async function phaseMain(): Promise<Record<string, unknown>> {
   s2b.payloadHash = payloadHash(s2b);
   const r2b = await call('POST', '/sales', s2b);
   out.s2 = { sale: r2.body, credit: cn2.body, replacement: r2b.body };
-  check('S2', 'DoorDash promo → sale (discount in avantTax), full credit note, new referenced receipt', r2.status === 200 && r2.body.status === 'accepted'
+  check('S2', 'DoorDash promo → sale (discount in avantTax), full credit note (« Crédité à »), new referenced receipt « Facture corrigée »', r2.status === 200 && r2.body.status === 'accepted'
     && r2.body.amounts.subtotalCents === 2598 && cn2.status === 200 && cn2.body.status === 'accepted' && cn2.body.amounts.subtotalCents === -2598
     && cn2.body.receipt.mentions.includes('NOTE DE CRÉDIT') && r2b.status === 200 && r2b.body.status === 'accepted'
-    && r2b.body.receipt.text80mm.some((l: string) => l.startsWith('Réf. : transaction')), `${r2.status}/${cn2.status}/${r2b.status} ${JSON.stringify(cn2.body).slice(0, 200)}`);
+    && r2b.body.receipt.text80mm.some((l: string) => l.startsWith('Réf. : transaction')) && r2b.body.receipt.mentions.includes('Facture corrigée')
+    && !cn2.body.receipt.mentions.includes('Facture corrigée') && cn2.body.receipt.text80mm.some((l: string) => l.startsWith('Crédité à :')), `${r2.status}/${cn2.status}/${r2b.status} ${JSON.stringify(cn2.body).slice(0, 200)}`);
 
   // S3 — Skip failed order (tax 0 in the feed): Food Hub computes the taxes from the base; then a missing item.
   const s3 = sale({ id: 's3', channel: 'skip', serviceType: 'LVT', lines: [line('Shawarma', 1400), line('Baklava', 600)] });
@@ -204,15 +222,26 @@ async function phaseMain(): Promise<Record<string, unknown>> {
 
   // S5 — website, own delivery, paid online; MEV-WEB down → offline_pending with a local QR, then the batch flush.
   await simControl({ mevDown: true });
-  const s5 = sale({ id: 's5', channel: 'website', serviceType: 'LVR', ecommerce: true, mode: 'CRE', collectedBy: 'paylink', deliveryCents: 499, lines: [line('Combo famille', 4599)] });
+  const s5 = sale({ id: 's5', channel: 'website', serviceType: 'LVR', ecommerce: true, mode: 'CRE', collectedBy: 'paylink', deliveryCents: 499, format: 'PEL', lines: [line('Combo famille', 4599)] });
   const r5 = await call('POST', '/sales', s5);
   await simControl({ mevDown: false });
   const r5done = await waitStatus(s5.saleKey as string, 'accepted');
   out.s5 = { offline: r5.body, after: r5done };
-  check('S5', 'website LVR + ecommerce O + CRE; offline_pending with QR while MEV-WEB is down; accepted after the batch flush, same noTrans', r5.status === 200
-    && r5.body.status === 'offline_pending' && r5.body.receipt.qr.svg.includes('<svg') && r5.body.receipt.mentions.some((m: string) => m.includes('HORS LIGNE'))
+  check('S5', 'website LVR + ecommerce O + CRE; offline_pending with QR and « PROBLÈME DE COMMUNICATION » ×2 while MEV-WEB is down; accepted after the batch flush, same noTrans', r5.status === 200
+    && r5.body.status === 'offline_pending' && r5.body.receipt.qr.svg.includes('<svg') && r5.body.receipt.mentions.includes('PROBLÈME DE COMMUNICATION')
+    && r5.body.receipt.text80mm.filter((l: string) => l.trim() === 'PROBLÈME DE COMMUNICATION').length === 2 && !r5done?.receipt?.mentions?.includes('PROBLÈME DE COMMUNICATION')
     && r5.body.amounts.subtotalCents === 4599 + 499 && r5done?.status === 'accepted' && r5done.receipt.noTrans === r5.body.receipt.noTrans
     && !!r5done.receipt.mevTransactionNumber, `${r5.body?.status} → ${r5done?.status}`);
+
+  {
+    // E1 — paper + electronic (PEL): the paper has no link; the electronic copy says « Copie électronique », link under the QR.
+    const e = r5done?.receipt?.electronic;
+    const el: string[] = e?.lines ?? [];
+    check('E1', 'PEL: paper without link or « Copie électronique »; electronic copy with both, link right under the QR', !!e
+      && !r5done.receipt.text80mm.some((l: string) => l.includes('Consulter')) && !r5done.receipt.mentions.includes('Copie électronique')
+      && e.mentions.includes('Copie électronique') && el[el.findIndex((l) => l.trim() === '[CODE QR]') + 1]?.trim() === 'Consulter la transaction en ligne'
+      && /<a href="[^"]+">Consulter la transaction en ligne<\/a>/.test(e.html), JSON.stringify(e?.mentions ?? null));
+  }
 
   // S6 — the platform cancels after acceptance → full credit note.
   const s6 = sale({ id: 's6', channel: 'uber_eats', serviceType: 'LVT', loc: LOC_B, lines: [line('Wrap', 1250)] });
