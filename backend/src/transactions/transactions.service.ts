@@ -7,7 +7,7 @@
  * cancellations, corrections, and daily summaries.
  */
 
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { MevWebService } from '../mev-web/mev-web.service';
@@ -126,10 +126,25 @@ export class TransactionsService {
     if (dto.relatedTransactionId) {
       const original = await this.prisma.transaction.findFirst({
         where: { id: dto.relatedTransactionId, operatorId: dto.operatorId },
-        select: { mevTransactionNumber: true },
+        select: { mevTransactionNumber: true, mevSubmissionStatus: true },
       });
       if (!original) throw new NotFoundException('Related transaction not found');
       originalMevNumber = original.mevTransactionNumber ?? undefined;
+
+      if (!originalMevNumber) {
+        if (original.mevSubmissionStatus === MevStatus.REJECTED) {
+          throw new BadRequestException('Related transaction was rejected by MEV-WEB — nothing to reference');
+        }
+        // Original still waiting for its MEV number (queued offline). On an offline
+        // device the new record is queued too, behind the original, and the number
+        // is filled in at flush time (MevWebService.submitOfflineBatch). A live
+        // submission would send no numeroTransactionOriginal → refuse it for now.
+        if (!device.offlineMode) {
+          throw new ConflictException(
+            'Related transaction is not certified by MEV-WEB yet (queued offline) — retry once it is',
+          );
+        }
+      }
     }
 
     const civilDate = this.getCivilDate();
@@ -268,13 +283,16 @@ export class TransactionsService {
 
   // ─── Cancel Transaction ───────────────────────────────────────────────────
 
-  async cancelTransaction(transactionId: string, userId: string, reason: string) {
-    const original = await this.prisma.transaction.findUnique({
-      where: { id: transactionId },
+  async cancelTransaction(operatorId: string, transactionId: string, userId: string, reason: string) {
+    const original = await this.prisma.transaction.findFirst({
+      where: { id: transactionId, operatorId },
       include: { items: true },
     });
     if (!original) throw new NotFoundException('Transaction not found');
     if (original.status === TransactionStatus.CANCELLED) throw new BadRequestException('Already cancelled');
+    if (original.transactionType === TransactionType.CANCELLATION) {
+      throw new BadRequestException('A cancellation cannot itself be cancelled');
+    }
 
     const cancellation = await this.createTransaction({
       operatorId:           original.operatorId,
@@ -315,23 +333,23 @@ export class TransactionsService {
    * ANY modification after invoice issuance MUST create a TransactionModification record.
    * Failure to log these modifications is a compliance violation.
    */
-  async addItemAfterInvoice(transactionId: string, userId: string, item: { description: string; quantity: number; unitPrice: number; taxCode?: string }, reason: string) {
-    await this.ensureInvoiced(transactionId);
+  async addItemAfterInvoice(operatorId: string, transactionId: string, userId: string, item: { description: string; quantity: number; unitPrice: number; taxCode?: string }, reason: string) {
+    await this.ensureInvoiced(operatorId, transactionId);
     await this.createModificationLog(transactionId, userId, ModificationType.ADD_ITEM, null, item, reason);
     return this.auditPostInvoiceAction(transactionId, userId, 'Ajout d\'un item après facturation');
   }
 
-  async removeItemAfterInvoice(transactionId: string, userId: string, itemId: string, reason: string = 'Non spécifié') {
-    await this.ensureInvoiced(transactionId);
-    const item = await this.prisma.transactionItem.findUnique({ where: { id: itemId } });
+  async removeItemAfterInvoice(operatorId: string, transactionId: string, userId: string, itemId: string, reason: string = 'Non spécifié') {
+    await this.ensureInvoiced(operatorId, transactionId);
+    const item = await this.prisma.transactionItem.findFirst({ where: { id: itemId, transactionId } });
     if (!item) throw new NotFoundException('Item not found');
     await this.createModificationLog(transactionId, userId, ModificationType.REMOVE_ITEM, item, null, reason);
     return this.auditPostInvoiceAction(transactionId, userId, `Suppression de l'item "${item.description}" après facturation`);
   }
 
-  async modifyPriceAfterInvoice(transactionId: string, userId: string, itemId: string, newPrice: number, reason: string = 'Non spécifié') {
-    await this.ensureInvoiced(transactionId);
-    const item = await this.prisma.transactionItem.findUnique({ where: { id: itemId } });
+  async modifyPriceAfterInvoice(operatorId: string, transactionId: string, userId: string, itemId: string, newPrice: number, reason: string = 'Non spécifié') {
+    await this.ensureInvoiced(operatorId, transactionId);
+    const item = await this.prisma.transactionItem.findFirst({ where: { id: itemId, transactionId } });
     if (!item) throw new NotFoundException('Item not found');
     const oldPrice = item.unitPrice;
     await this.prisma.transactionItem.update({ where: { id: itemId }, data: { unitPrice: newPrice } });
@@ -410,8 +428,14 @@ export class TransactionsService {
     return quebecCivilDate();
   }
 
-  private async ensureInvoiced(transactionId: string) {
-    const tx = await this.prisma.transaction.findUnique({ where: { id: transactionId } });
+  /** Tenant isolation: 404 unless the transaction belongs to this operator */
+  async assertOwned(operatorId: string, transactionId: string) {
+    const tx = await this.prisma.transaction.findFirst({ where: { id: transactionId, operatorId }, select: { id: true } });
+    if (!tx) throw new NotFoundException('Transaction not found');
+  }
+
+  private async ensureInvoiced(operatorId: string, transactionId: string) {
+    const tx = await this.prisma.transaction.findFirst({ where: { id: transactionId, operatorId } });
     if (!tx) throw new NotFoundException('Transaction not found');
     if (tx.status !== TransactionStatus.INVOICED) throw new BadRequestException('Transaction is not invoiced');
   }

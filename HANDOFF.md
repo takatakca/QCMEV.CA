@@ -21,6 +21,9 @@
 | 5 | Operator registration flow (public register, UTL headers, MEV user sync) | `operators/*`, `auth.service.ts`, `mev-web.service.ts`, `mev-time.ts` | ✅ done (tested live) |
 | 6 | Certificate lifecycle + nightly renewal job | `certificates/certificate-lifecycle.service.ts` (new), `certificates.*`, simulator | ✅ done (tested live) |
 | 7 | Full build verification (backend + frontend) | — | ✅ done |
+| 8 | Transactions tenant isolation (receipt, cancel, post-invoice edits) | `transactions.*` | ✅ done (tested live) |
+| 9 | ANN/COR/NDC of a sale still queued offline | `transactions.service.ts`, `mev-web.service.ts` | ✅ done (tested live) |
+| 10 | class-validator DTOs replace `@Body() dto: any` | `transactions/dto`, `devices/dto`, `auth/dto` (new) | ✅ done (tested live) |
 
 ### Blocked on outside parties (cannot be done in code)
 - SW-77 certification run needs Revenu Québec TESTING credentials
@@ -82,13 +85,20 @@
   - ANN/COR/NDC now send the original's MEV transaction number. Tenant isolation added for devices and for sale creation.
   - Final: backend `nest build` ✅, frontend `next build` ✅, migration ✅ on Postgres 16.
 
+- 2026-10-24 — Tasks 8–10 done, **tested live** (Postgres 16 + simulator, two operators A/B).
+  - **Tenant isolation:** receipt, receipt/text, cancel, items add/remove/price now scoped by `operatorId` (`TransactionsService.assertOwned()`, `ensureInvoiced(operatorId, id)`). Operator B on A's sale → 404 on all 6 routes.
+  - **Finding/fix:** remove/price loaded the item by id only → any item of any transaction could be edited. Item must now belong to the transaction (else 404).
+  - A cancellation can no longer be cancelled (400).
+  - **Queued-original ANN/COR/NDC:** on an offline device the new record is queued behind the original and `numeroTransactionOriginal` is filled at flush time (`MevWebService.resolveOriginalReference()`); if the original is still queued the flush pauses, if it was rejected the item fails. On an online device → 409 (would have sent no reference). Original REJECTED → 400.
+  - **Finding/fix:** flushing a queued sale that had been cancelled meanwhile reset it to `INVOICED`; it now stays `CANCELLED`.
+  - DTOs: `CreateTransactionBodyDto` (+ nested items, taxCode FP/F/P/''), cancel/items/price DTOs, `RegisterDeviceDto`/`UpdateDeviceDto`, `CreateUserDto`. Bad bodies → 400. Frontend payloads still accepted (extra `location` on devices is stripped by the whitelist).
+  - Live: sale ACCEPTED → B gets 404s → env unreachable → sale QUEUED → cancel QUEUED → flush `{submitted:2}` → original CANCELLED/ACCEPTED, ANN sent with `numeroTransactionOriginal = SIM-…-000002` (checked in `MevRequestLog`). 409 path checked with a 2nd online device.
+  - Builds: backend `nest build` ✅, frontend `tsc` ✅.
+
 ## ▶ NEXT SESSION — start here
-1. **Transactions tenant isolation (security, do first):** `GET /transactions/:id/receipt`, `POST /transactions/:id/cancel`, `/items`, `/items/:itemId/remove|price` load by id without checking `operatorId` (see `transactions.service.ts` ~L326, 334, 414, 441). Same pattern as `DevicesService.assertOwned()`.
-2. Edge case: cancelling a sale that is still `QUEUED_OFFLINE` → original has no MEV number yet → `numeroTransactionOriginal` undefined in the queued ANN. Option: build the payload at flush time, or block until accepted.
-3. Run `docker compose up --build` on a machine with Docker (cloud sandbox has none) — expected to work after task 4 fixes. If the DB was created with the old 2024 migration: `docker compose down -v` first.
-4. Product decision: gate public `POST /api/operators/register` in PRODUCTION (invite code / env flag)?
-5. Replace `@Body() dto: any` on `POST /devices`, `POST /operators/users`, `POST /transactions` with class-validator DTOs (pattern: `operators/dto/register-operator.dto.ts`).
-6. External: Revenu Québec TESTING credentials → SW-77 certification run → submission.
+1. Run `docker compose up --build` on a machine with Docker (cloud sandbox has none) — expected to work after task 4 fixes. If the DB was created with the old 2024 migration: `docker compose down -v` first.
+2. Product decision (Takatak): gate public `POST /api/operators/register` in PRODUCTION (invite code / env flag)? Not done — it changes who can sign up.
+3. External: Revenu Québec TESTING credentials → SW-77 certification run → submission.
 
 ### Findings to fix next (found while reading, not yet done)
 - [x] ~~Civil date uses UTC~~ → fixed in task 5 (`mev-web/mev-time.ts`, `America/Toronto`).
@@ -97,4 +107,5 @@
 - [x] ~~UTL/CRT send empty header~~ → fixed tasks 5–6.
 - [x] ~~`POST /operators/users` returns `passwordHash`~~ → fixed task 5
 - [x] ~~No way to re-send UTL~~ → `POST /api/operators/users/sync-mev` + `AuthService.syncMevUsers()`; auto-call after cert storage → task 6
+- [x] ~~Tenant isolation on transactions~~ → task 8.
 - [x] ~~Tenant isolation on devices~~ → `DevicesService.assertOwned()` on get/update/offline-status/flush; sales require device + user of the caller's operator.

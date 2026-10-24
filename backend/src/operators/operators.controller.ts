@@ -3,6 +3,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { OperatorsService } from './operators.service';
 import { AuthService } from '../auth/auth.service';
 import { RegisterOperatorDto, UpdateOperatorDto } from './dto/register-operator.dto';
+import { CreateUserDto } from '../auth/dto/create-user.dto';
 
 /**
  * NOTE: guards are per-route on purpose. `register` MUST stay public — a
@@ -64,7 +65,7 @@ export class OperatorsController {
   @Post('users')
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.CREATED)
-  async createUser(@Request() req: any, @Body() dto: any) {
+  async createUser(@Request() req: any, @Body() dto: CreateUserDto) {
     return this.authService.createUser(req.user.operatorId, dto);
   }
 
