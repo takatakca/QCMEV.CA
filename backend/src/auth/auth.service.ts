@@ -99,7 +99,7 @@ export class AuthService {
       username:  string;
       password:  string;
       firstName: string;
-      lastName:  string;
+      lastName?: string;
       role:      string;
     },
     opts: { skipMev?: boolean } = {},

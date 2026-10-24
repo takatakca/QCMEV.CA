@@ -2,6 +2,7 @@ import { Controller, Get, Post, Put, Body, Param, UseGuards, Request, HttpCode, 
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { DevicesService } from './devices.service';
 import { OfflineQueueService } from '../offline/offline-queue.service';
+import { RegisterDeviceDto, UpdateDeviceDto } from './dto/device.dto';
 
 @Controller('devices')
 @UseGuards(JwtAuthGuard)
@@ -20,7 +21,7 @@ export class DevicesController {
   /** Register a new device */
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  async register(@Request() req: any, @Body() dto: any) {
+  async register(@Request() req: any, @Body() dto: RegisterDeviceDto) {
     return this.devicesService.register(req.user.operatorId, dto);
   }
 
@@ -33,7 +34,7 @@ export class DevicesController {
 
   /** Update device info */
   @Put(':id')
-  async update(@Request() req: any, @Param('id') id: string, @Body() dto: any) {
+  async update(@Request() req: any, @Param('id') id: string, @Body() dto: UpdateDeviceDto) {
     await this.devicesService.assertOwned(req.user.operatorId, id);
     return this.devicesService.update(id, dto);
   }

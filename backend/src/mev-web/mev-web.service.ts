@@ -181,6 +181,18 @@ export class MevWebService {
         const payload: unknown = item.payload;
         assertTransactionPayload(payload);
 
+        // ANN / COR / NDC queued while the original was itself still queued:
+        // its MEV number only exists now, after the original was flushed.
+        const reference = await this.resolveOriginalReference(item.transactionId, payload);
+        if (reference === 'WAIT') {
+          await this.prisma.offlineQueue.update({
+            where: { id: item.id },
+            data: { status: QueueStatus.PENDING, errorMessage: 'Waiting for the original transaction MEV number' },
+          });
+          this.logger.warn(`Offline batch for device ${deviceId} paused at item ${item.id}: original not certified yet`);
+          break;
+        }
+
         const signed = await this.signAndPrepare(operatorId, payload);
         const response = await this.sendToMevWeb<TransactionResponse>(
           operatorId,
@@ -195,6 +207,12 @@ export class MevWebService {
         });
 
         if (item.transactionId) {
+          // A sale cancelled while still queued stays CANCELLED once certified
+          const current = await this.prisma.transaction.findUnique({
+            where: { id: item.transactionId },
+            select: { status: true },
+          });
+          const cancelled = current?.status === TransactionStatus.CANCELLED;
           await this.prisma.transaction.update({
             where: { id: item.transactionId },
             data: {
@@ -204,7 +222,7 @@ export class MevWebService {
               mevResponse:          response as object,
               qrCodeUrl:            response.urlCodeQR,
               certifiedData:        response.donneeCertifiee,
-              status:               TransactionStatus.INVOICED,
+              status:               cancelled ? TransactionStatus.CANCELLED : TransactionStatus.INVOICED,
               invoicedAt:           new Date(),
             },
           });
@@ -251,6 +269,37 @@ export class MevWebService {
       where: { deviceId, status: QueueStatus.PENDING },
     });
     return { submitted, failed, remaining };
+  }
+
+  /**
+   * Fill numeroTransactionOriginal from the original's MEV number when it was not
+   * known at enqueue time. Returns 'WAIT' while the original is still queued;
+   * throws (→ item FAILED) when the original was rejected and never will have one.
+   */
+  private async resolveOriginalReference(
+    transactionId: string | null,
+    payload: TransactionRequestPayload,
+  ): Promise<'READY' | 'WAIT'> {
+    if (!transactionId || payload.corps.transaction.numeroTransactionOriginal) return 'READY';
+
+    const tx = await this.prisma.transaction.findUnique({
+      where: { id: transactionId },
+      select: { relatedTransactionId: true },
+    });
+    if (!tx?.relatedTransactionId) return 'READY';
+
+    const original = await this.prisma.transaction.findUnique({
+      where: { id: tx.relatedTransactionId },
+      select: { mevTransactionNumber: true, mevSubmissionStatus: true },
+    });
+    if (original?.mevTransactionNumber) {
+      payload.corps.transaction.numeroTransactionOriginal = original.mevTransactionNumber;
+      return 'READY';
+    }
+    if (!original || original.mevSubmissionStatus === MevStatus.REJECTED) {
+      throw new Error('Original transaction was rejected by MEV-WEB — nothing to reference');
+    }
+    return 'WAIT';
   }
 
   async checkMevWebConnectivity(operatorId: string): Promise<boolean> {
