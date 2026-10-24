@@ -2,6 +2,7 @@
  * Devices management page — register and monitor SEV devices
  */
 import React, { useEffect, useState } from 'react';
+import FoodHubLocations from '../../components/FoodHubLocations';
 import Layout from '../../components/Layout';
 import { listDevices, flushDeviceQueue, registerDevice } from '../../lib/api';
 
@@ -209,6 +210,9 @@ export default function DevicesPage() {
             ))}
           </div>
         )}
+
+        {/* Food Hub kitchens → the device that signs their invoices (no seed CLI needed) */}
+        {!loading && <FoodHubLocations devices={devices} />}
       </div>
     </Layout>
   );

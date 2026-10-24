@@ -160,15 +160,50 @@ export function leftRight(left: string, right: string): string {
   return `${l}${' '.repeat(RECEIPT_WIDTH - l.length - right.length)}${right}`;
 }
 
-export function wrap(s: string, indent = ''): string[] {
+/**
+ * Greedy word wrap over unbreakable tokens, joined by one space; `indent` starts every line after the first. A line is
+ * only ever broken between two tokens: the one exception is a single token longer than a whole line, which is cut.
+ */
+export function wrapTokens(tokens: string[], indent = '', width = RECEIPT_WIDTH): string[] {
+  const ind = indent.length < width - 1 ? indent : '';
   const out: string[] = [];
-  let rest = s;
-  while (rest.length > RECEIPT_WIDTH) {
-    out.push(rest.slice(0, RECEIPT_WIDTH));
-    rest = indent + rest.slice(RECEIPT_WIDTH);
+  let cur: string | null = null;
+  for (const token of tokens) {
+    if (cur !== null && cur.length + 1 + token.length <= width) {
+      cur += ` ${token}`;
+      continue;
+    }
+    if (cur !== null) out.push(cur);
+    let start = out.length ? ind : '';
+    let rest = token;
+    while (start.length + rest.length > width) {
+      const room = width - start.length;
+      out.push(start + rest.slice(0, room));
+      rest = rest.slice(room);
+      start = ind;
+    }
+    cur = start + rest;
   }
-  out.push(rest);
-  return out;
+  if (cur !== null) out.push(cur);
+  return out.length ? out : [''];
+}
+
+/** Word wrap at the spaces of `s` (never in the middle of a word, a number, a date or a time). */
+export function wrap(s: string, indent = '', width = RECEIPT_WIDTH): string[] {
+  if (s.length <= width) return [s];
+  return wrapTokens(s.split(' ').filter(Boolean), indent, width);
+}
+
+/** An item: the amount and tax code on the first line at the right; a long description wraps under itself. */
+export function itemLines(prefix: string, description: string, right: string): string[] {
+  const room = RECEIPT_WIDTH - right.length - 1 - prefix.length;
+  const parts = wrapTokens(description.split(' ').filter(Boolean), '', Math.max(room, 8));
+  return parts.map((p, i) => (i === 0 ? leftRight(`${prefix}${p}`, right) : `${' '.repeat(prefix.length)}${p}`));
+}
+
+/** The reference to the original transaction; « du <date> <heure> » is kept whole on its own line when it wraps. */
+export function referenceLines(ref: { noTrans: string; datTrans: string }): string[] {
+  return wrapTokens(['Réf.', ':', 'transaction', ref.noTrans, `du ${displayDatTrans(ref.datTrans)}`]);
 }
 
 /** psiDatTrans as printed: AAAAMMJJhhmmss → "AAAA-MM-JJ hh:mm:ss"; any other format as received. */
@@ -185,26 +220,27 @@ export function renderText(r: ReceiptInput, mentions: string[], electronic = fal
   const creditNote = r.documentKind === 'CREDIT_NOTE';
 
   // ── Before the first "=" line ──
+  // Every free-text line wraps at word boundaries (wrap / wrapTokens): never wider than 42, never a cut word or time.
   L.push(...wrap(r.merchant.name).map(center));
   if (r.merchant.address) L.push(...wrap(r.merchant.address).map(center));
-  if (r.merchant.city) L.push(center(r.merchant.city));
+  if (r.merchant.city) L.push(...wrap(r.merchant.city).map(center));
   L.push(dash);
-  L.push(`Date : ${displayDatTrans(r.datTrans)} (${r.utc})`);
-  L.push(`Transaction : ${r.noTrans}`);
+  L.push(...wrap(`Date : ${displayDatTrans(r.datTrans)} (${r.utc})`));
+  L.push(...wrap(`Transaction : ${r.noTrans}`));
   if (r.externalRef) L.push(...wrap(`Commande : ${r.externalRef}`));
-  if (r.reference) L.push(...wrap(`Réf. : transaction ${r.reference.noTrans} du ${displayDatTrans(r.reference.datTrans)}`));
+  if (r.reference) L.push(...referenceLines(r.reference));
   L.push(dash);
   for (const line of r.lines) {
     const qty = line.isModifier ? '  + ' : `${line.quantity} x `;
-    L.push(leftRight(`${qty}${line.description}`, `${receiptAmount(line.totalCents)} ${line.tax}`));
+    L.push(...itemLines(qty, line.description, `${receiptAmount(line.totalCents)} ${line.tax}`));
   }
   L.push(dash);
   L.push(leftRight('Sous-total', receiptAmount(r.subtotalCents)));
-  L.push(`No TPS : ${r.merchant.noTPS}`);
-  L.push(`No TVQ : ${r.merchant.noTVQ}`);
-  L.push(`Paiement : ${PAYMENT_LABEL[r.modPai] ?? r.modPai}`);
+  L.push(...wrap(`No TPS : ${r.merchant.noTPS}`));
+  L.push(...wrap(`No TVQ : ${r.merchant.noTVQ}`));
+  L.push(...wrap(`Paiement : ${PAYMENT_LABEL[r.modPai] ?? r.modPai}`));
   if (creditNote) {
-    L.push(r.creditedTo ? `Crédité à : ${r.creditedTo}`.slice(0, RECEIPT_WIDTH) : `Crédité à : ${'_'.repeat(RECEIPT_WIDTH - 12)}`);
+    L.push(...(r.creditedTo ? wrap(`Crédité à : ${r.creditedTo}`, '  ') : [`Crédité à : ${'_'.repeat(RECEIPT_WIDTH - 12)}`]));
     L.push(`Date de la remise : ${'_'.repeat(RECEIPT_WIDTH - 20)}`);
   }
 
@@ -219,9 +255,9 @@ export function renderText(r: ReceiptInput, mentions: string[], electronic = fal
   L.push(QR_LINE);
   if (electronic) L.push(center(LINK_TEXT));
   const offline = isOffline(r) || !r.mevTransactionNumber;
-  L.push(center(offline || !r.mevProcessedAt ? MENTION.COMMUNICATION_PROBLEM : displayProcessedAt(r.mevProcessedAt)));
-  L.push(center(offline ? MENTION.COMMUNICATION_PROBLEM : (r.mevTransactionNumber as string)));
-  L.push(center(r.deviceId));
+  L.push(...wrap(offline || !r.mevProcessedAt ? MENTION.COMMUNICATION_PROBLEM : displayProcessedAt(r.mevProcessedAt)).map(center));
+  L.push(...wrap(offline ? MENTION.COMMUNICATION_PROBLEM : (r.mevTransactionNumber as string)).map(center));
+  L.push(...wrap(r.deviceId).map(center));
   L.push(rule);
 
   // ── Footer ──

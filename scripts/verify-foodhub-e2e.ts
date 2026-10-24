@@ -83,6 +83,19 @@ async function call(method: 'GET' | 'POST', path: string, body?: Record<string, 
   return { status: res.status, body: parsed, eventId };
 }
 
+/** A staff call (JWT), like the dashboard. */
+async function staffCall(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, token: string, body?: unknown): Promise<{ status: number; body: any }> {
+  const res = await fetch(`${BASE}/api${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await res.text();
+  let parsed: any = null;
+  try { parsed = text ? JSON.parse(text) : null; } catch { parsed = text; }
+  return { status: res.status, body: parsed };
+}
+
 async function simControl(body: Record<string, unknown>) {
   const r = await fetch(`${BASE}/api/mev-simulator/_control`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (r.status !== 200) throw new Error(`simulator control failed: ${r.status}`);
@@ -249,8 +262,12 @@ async function phaseMain(): Promise<Record<string, unknown>> {
   const cn6body: Record<string, unknown> = { schema: 'foodhub.credit.v1', tenantId: TENANT, creditKey: `${s6.saleKey}:cn:1`, reason: 'cancelled', full: true };
   cn6body.payloadHash = payloadHash(cn6body);
   const cn6 = await call('POST', `/sales/${enc(s6.saleKey as string)}/credit-notes`, cn6body);
-  check('S6', 'cancel after acceptance → full credit note referencing the sale', r6.body?.status === 'accepted' && cn6.status === 200
-    && cn6.body.amounts.totalCents === -r6.body.amounts.totalCents && cn6.body.receipt.text80mm.some((l: string) => l.includes(`transaction ${r6.body.receipt.noTrans} du`)), JSON.stringify(cn6.body).slice(0, 200));
+  // The reference is two whole lines (cut between words): « Réf. : transaction N », then « du AAAA-MM-JJ hh:mm:ss ».
+  const cn6text: string[] = cn6.body?.receipt?.text80mm ?? [];
+  const ref6 = cn6text.indexOf(`Réf. : transaction ${r6.body?.receipt?.noTrans}`);
+  check('S6', 'cancel after acceptance → full credit note referencing the sale (reference cut between words, date and time whole)', r6.body?.status === 'accepted' && cn6.status === 200
+    && cn6.body.amounts.totalCents === -r6.body.amounts.totalCents && ref6 >= 0 && /^du \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(cn6text[ref6 + 1] ?? '')
+    && cn6text.every((l) => l.length <= 42), JSON.stringify(cn6.body).slice(0, 200));
 
   // S9 — civil date and time are local (America/Montreal), with the offset.
   const local = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Montreal', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()).replace(/-/g, '');
@@ -308,6 +325,31 @@ async function phaseMain(): Promise<Record<string, unknown>> {
   check('N9', 'credit larger than what remains → 422', n9.status === 422, `${n9.status} ${JSON.stringify(n9.body).slice(0, 150)}`);
   const n10 = await call('POST', '/sales', s12, { integrationId: 'someone_else' });
   check('N10', 'unknown X-Integration-Id → 401', n10.status === 401, `${n10.status}`);
+
+  // L2 / L3 — a kitchen linked by the operator's staff through the dashboard API (no seed CLI), then unlinked.
+  // The saleKeys do not carry RUN, so the D6 counts below stay those of S1–S11.
+  {
+    const login = await staffCall('POST', '/auth/login', '', { username: process.env.QCMEV_ADMIN_USER ?? '', password: process.env.QCMEV_ADMIN_PASSWORD ?? '' });
+    const token = login.body?.accessToken ?? '';
+    const listed = await staffCall('GET', '/operators/foodhub-locations', token);
+    const locA = listed.body?.locations?.find((l: any) => l.locationId === LOC_A);
+    const LOC_API = `E2E_API_${RUN}`;
+    const linked = await staffCall('PUT', '/operators/foodhub-locations', token, { tenantId: TENANT, locationId: LOC_API, deviceId: locA?.device?.id });
+    const apiSale = (id: string) => {
+      const b = sale({ id, channel: 'phone', serviceType: 'CMP', mode: 'DEB', collectedBy: 'clover_tender', loc: LOC_API, lines: [line('Frites', 450)] });
+      b.saleKey = `fh:${TENANT}:direct:phone:API-${crypto.randomBytes(5).toString('hex')}`;
+      b.payloadHash = payloadHash(b);
+      return b;
+    };
+    const ra = await call('POST', '/sales', apiSale('api1'));
+    check('L2', 'kitchen linked by staff through PUT /api/operators/foodhub-locations → ready at once; its sale is accepted on that device', listed.status === 200 && !!locA
+      && linked.status === 200 && linked.body.deviceReady && linked.body.certReady && linked.body.usersReady
+      && ra.status === 200 && ra.body.status === 'accepted' && ra.body.receipt?.deviceId === locA.device.mevDeviceId, JSON.stringify({ listed: listed.status, linked: linked.body, sale: ra.status }).slice(0, 400));
+    const off = await staffCall('DELETE', `/operators/foodhub-locations/${linked.body?.id}`, token);
+    const rb = await call('POST', '/sales', apiSale('api2'));
+    check('L3', 'kitchen unlinked through the API → its next sale answers 423 location_not_ready (nothing issued)', off.status === 200 && off.body?.isActive === false
+      && rb.status === 423 && rb.body?.error === 'location_not_ready', `${off.status} ${rb.status}`);
+  }
 
   if (STATE) fs.writeFileSync(STATE, JSON.stringify({ s4, s4noTrans: r4.body.receipt.noTrans, s4tx: r4.body.receipt.qcmevTransactionId, run: RUN }));
   return out;

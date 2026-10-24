@@ -223,3 +223,36 @@ tests pass (20 database tests skipped without a DB); `tools/local-run/run-local.
 2. Revenu Québec partner documents (SW-73, .A, .B, .D) → close `SPEC_GAPS.md` rows (#29 ASCII form, #30 `utc`, #31–32).
 3. Product decision: keep `QCMEV_PUBLIC_REGISTRATION` open outside the simulator? Non-exportable key custody (KMS / HSM) before PROD.
 4. Run `docker compose up --build` once on a machine with Docker.
+
+---
+
+## 2026-10-24 — Review minors on PR #3 (branch `feature/official-protocol-foodhub`)
+
+Five minor findings from the end-to-end and protocol reviews, plus one doc alignment. All fixed with tests.
+
+| # | Finding | Fix | Where |
+|---|---|---|---|
+| 1 | The « Réf. » line of every credit note / corrected receipt was cut at exactly 42 characters, in the middle of the time | `wrap()` / `wrapTokens()` break only between words; « Réf. : transaction N » / « du AAAA-MM-JJ hh:mm:ss » (date and time kept whole). Checked for every line type: name, address, city, date, number, order, item (description wraps under itself, amount stays on the first line; it used to be truncated), TPS / TVQ numbers, payment, « Crédité à » (was truncated), mentions, MEV-WEB time and number, device id. Only a single word longer than 42 is ever cut | `receipts/receipt-renderer.ts`, `test/receipt-layout.spec.ts` (14 layouts) |
+| 2 | Dashboard « Environnement » tile always « – » (read `mevStatus.operator.mevEnvironment`, which does not exist); the « Exploitant » card never showed and would have shown the authorization code | Tile reads `environment` (+ « Non certifié : simulateur / essais seulement »); the card reads `GET /operators/me` (no NEQ, no authorization code). `test/dashboard-contract.spec.ts` fails if a page reads a field the API does not send | `frontend/src/pages/index.tsx` |
+| 3 | No API route or screen to link a Food Hub location to a device (only the seed CLI) | `GET/PUT /api/operators/foodhub-locations`, `DELETE /api/operators/foodhub-locations/:id` (manager; row kept inactive); linking creates `FOODHUB-AUTO` and registers it with UTL when a device is certified; another operator's location → 409, another operator's device → 404. Dashboard: « Appareils » → « Cuisines Food Hub » | `integrations/foodhub/foodhub-locations.ts`, `frontend/src/components/FoodHubLocations.tsx`; tests `test/review-minors.spec.ts`, SW-77 suite `FH-LOCATION`, e2e L2 / L3 |
+| 4 | Food Hub's test stand-in (`scripts/e2e/mock-qcmev.mjs`, verify:foodhub section 48) numbers `261024-0001` and puts « RÉF. FACTURE N » in the credit-note mentions; the real QCMEV sends `"1"`, `"2"`… and a « Réf. » text line | QCMEV side: CONTRACT.md §7 « What Food Hub may rely on » (opaque `noTrans`, `mevTransactionNumber` as received, the reference is a text line, credit notes and copies dated when issued in Montréal time, 42 columns). **Food Hub side still to do** (not this branch): align the stand-in and the two checks (S1 regex, S6 mention) in Food Hub PR #99 | `integrations/foodhub/CONTRACT.md` |
+| 5 | UTL was still sent with an expired certificate, while CERTIFICATION.md / SPEC_GAPS #9 said "every transmission" was blocked | `registerSevUser()` skips a device whose certificate has expired (CRITICAL audit); that device registers every active user right after its renewal; all devices expired → 423 `certReady`, user not registered. Docs now say exactly what is still sent: only the renewal CRT `REM` | `operators/operators.ts`; tests `test/review-minors.spec.ts`, SW-77 `EXPIRED` |
+| 6 | CONTRACT.md §8 said Food Hub alerts at 15 minutes | Aligned with Food Hub `docs/MEV_INTEGRATION.md` §6: CRITICAL after 1 minute for a sale or credit note waiting (at once when held for a person or waiting for its payment mode); copies: warning at 15 minutes | `integrations/foodhub/CONTRACT.md` |
+
+No migration, no new environment variable. The renderer change alters `text80mm` (and so `renderHash`) of receipts with
+long lines; nothing stores `renderHash`.
+
+**Checks (2026-10-24, Windows, Node 22, embedded PostgreSQL 16):** backend typecheck 0 errors, lint 0, Jest 164 passed
+(21 database tests skipped without a DB), build OK; frontend typecheck, lint (no warning) and `next build` (10 pages) OK;
+`tools/local-run/run-local.mjs` ALL GREEN in 155 s: build, `prisma migrate deploy`, drift = none, SW-77 preparation 21/21
+(new FH-LOCATION; EXPIRED now also checks UTL), seed, CRT + UTL, Jest 164, `scripts/run-test-cases.ts` 13/13, Food Hub
+e2e 40/40 (new L2, L3) + 2/2 after restart, login rate limit 429.
+
+### ▶ NEXT SESSION — start here (replaces the list above)
+1. Owner: review + merge PR #3 (`feature/official-protocol-foodhub`).
+2. Food Hub PR #99: align `scripts/e2e/mock-qcmev.mjs` with CONTRACT.md §7 (numbers `"1"`, `"2"`…; the reference as a
+   « Réf. » text line, not a mention; `mevTransactionNumber` opaque; copies dated in Montréal time) and the S1 / S6
+   checks of `scripts/e2e/mev-scenarios.mjs`.
+3. Revenu Québec partner documents (SW-73, .A, .B, .D) → close `SPEC_GAPS.md` rows (#9 REM with an expired certificate, #29 ASCII form, #30 `utc`, #31–32).
+4. Product decision: keep `QCMEV_PUBLIC_REGISTRATION` open outside the simulator? Non-exportable key custody (KMS / HSM) before PROD.
+5. Run `docker compose up --build` once on a machine with Docker.

@@ -6,7 +6,9 @@
  *    certificate yet. The admin is registered with UTL automatically once a device gets its certificate.
  *    Can be turned off with QCMEV_PUBLIC_REGISTRATION=false (then only `npm run seed:operator` creates operators).
  *  - registerSevUser(): UTL request (modif AJO / SUP / VAL) signed by each certified device of the operator; the
- *    user's nomUtil is marked registered once MEV-WEB accepts it on every device.
+ *    user's nomUtil is marked registered once MEV-WEB accepts it on every device it was sent to. A device whose SEV
+ *    certificate has expired is never used (no transmission with an expired certificate): it is skipped and audited
+ *    CRITICAL, and gets UTL AJO for every active user after its renewal; when every device is expired, 423 certReady.
  *  - syncMevUsers(): sends UTL AJO for every active user not registered yet (no-op when all are).
  * Never returns identity values, password hashes or authorization codes.
  */
@@ -38,6 +40,7 @@ import { AuditLogService } from '../logging/audit-log.service';
 import { MevWebService } from '../mev-web/mev-web.service';
 import { classifyErrors, MevError, Modif } from '../mev-web/mev-web.types';
 import { PrismaService } from '../prisma/prisma.service';
+import { LocationNotReadyError } from '../transactions/transactions.service';
 import { NOM_UTIL, RegisterOperatorDto, UpdateOperatorDto } from './dto/register-operator.dto';
 
 function defaultNomUtil(first: string | undefined, last: string | undefined, username: string): string {
@@ -192,11 +195,27 @@ export class OperatorsService {
     });
     if (!devices.length) throw new UnprocessableEntityException('No certified device yet: run the certificate request (CRT) first');
     const errors: MevError[] = [];
+    const expired: string[] = [];
+    let sent = 0;
     for (const d of devices) {
       const m = await this.certificates.signingMaterial(d.id);
+      // PROVEN (« Obtention et suppression d'un ou plusieurs certificats numériques », Expiration): an expired
+      // certificate transmits nothing, UTL included. That device is skipped; once it is renewed (CRT REM),
+      // syncUsersToDevice() sends UTL AJO on it for every active user.
+      if (m.expired) {
+        expired.push(d.serialNumber);
+        continue;
+      }
+      sent += 1;
       const res = await this.mevWeb.userRequest({ id: op.id, noTPS: op.noTPS, noTVQ: op.noTVQ }, m, modif, user.mevUserName);
       const listErr = res?.retourUtil?.listErr ?? [];
       if (classifyErrors(listErr) !== 'accepted') errors.push(...listErr);
+    }
+    if (expired.length) {
+      await this.audit.log({ operatorId, eventType: AuditEventType.MEV_ERROR, severity: LogSeverity.CRITICAL, userId, description: `UTL ${modif} for ${user.mevUserName} NOT sent on ${expired.length} device(s): the SEV certificate has expired (renew it: CRT REM)`, metadata: { devices: expired } });
+    }
+    if (!sent) {
+      throw new LocationNotReadyError('certReady', `the SEV certificate has expired: UTL ${modif} is not sent until it is renewed (CRT REM)`);
     }
     if (errors.length) {
       await this.audit.log({ operatorId, eventType: AuditEventType.MEV_ERROR, severity: LogSeverity.ERROR, userId, description: `UTL ${modif} refused`, metadata: { errors } });
@@ -204,8 +223,8 @@ export class OperatorsService {
     }
     const data = modif === 'SUP' ? { mevRegisteredAt: null, isActive: false } : { mevRegisteredAt: new Date(), mevUserId: user.mevUserName };
     if (modif !== 'VAL') await this.prisma.sEVUser.update({ where: { id: userId }, data });
-    await this.audit.log({ operatorId, eventType: AuditEventType.USER_REGISTERED, userId, description: `UTL ${modif} for ${user.mevUserName} on ${devices.length} device(s)` });
-    return { status: 'registered', modif, nomUtil: user.mevUserName, devices: devices.length };
+    await this.audit.log({ operatorId, eventType: AuditEventType.USER_REGISTERED, userId, description: `UTL ${modif} for ${user.mevUserName} on ${sent} device(s)${expired.length ? ` (${expired.length} skipped: certificate expired)` : ''}` });
+    return { status: 'registered', modif, nomUtil: user.mevUserName, devices: sent, ...(expired.length ? { skippedExpiredDevices: expired.length } : {}) };
   }
 
   /** After a new certificate, every user with a nomUtil is registered (again) on that device. */

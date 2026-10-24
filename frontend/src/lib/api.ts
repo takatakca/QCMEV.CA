@@ -92,6 +92,11 @@ export const registerDevice = (data: { name?: string; serialNumber: string; devi
 export const getDeviceOfflineStatus = (id: string) => api.get(`/devices/${id}/offline-status`);
 export const flushDeviceQueue = (id: string) => api.post(`/devices/${id}/flush-queue`);
 
+// Food Hub locations (kitchens) → SEV device. Linking also creates and registers the FOODHUB-AUTO system user.
+export const listFoodHubLocations = () => api.get('/operators/foodhub-locations');
+export const linkFoodHubLocation = (body: { tenantId: string; locationId: string; deviceId: string }) => api.put('/operators/foodhub-locations', body);
+export const unlinkFoodHubLocation = (id: string) => api.delete(`/operators/foodhub-locations/${id}`);
+
 // Certificates (CRT + UTL per device)
 export const listCertificates = () => api.get('/certificates');
 export const getActiveCert = async () => {

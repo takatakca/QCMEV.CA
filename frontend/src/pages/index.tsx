@@ -3,18 +3,25 @@
  */
 import React, { useEffect, useState } from 'react';
 import Layout from '../components/Layout';
-import { getMevStatus, getDailySummary, listDevices } from '../lib/api';
+import { getMe, getMevStatus, listDevices } from '../lib/api';
 
+/**
+ * Fields read from GET /api/operators/mev-status (OperatorsService.mevStatus): environment, certified, hasCertificate,
+ * certificateExpiry, offlineDeviceCount, pendingQueueSize. The operator card reads GET /api/operators/me.
+ * backend/test/dashboard-contract.spec.ts fails when this page reads a field those answers do not have.
+ */
 export default function DashboardPage() {
   const [mevStatus, setMevStatus]     = useState<any>(null);
+  const [operator, setOperator]       = useState<any>(null);
   const [devices, setDevices]         = useState<any[]>([]);
   const [loading, setLoading]         = useState(true);
 
   useEffect(() => {
-    Promise.all([getMevStatus(), listDevices()])
-      .then(([statusRes, devicesRes]) => {
+    Promise.all([getMevStatus(), listDevices(), getMe()])
+      .then(([statusRes, devicesRes, meRes]) => {
         setMevStatus(statusRes.data);
         setDevices(devicesRes.data);
+        setOperator(meRes.data);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -66,8 +73,13 @@ export default function DashboardPage() {
           <div className="card">
             <p className="text-xs text-gray-500 uppercase tracking-wide">Environnement</p>
             <p className="text-lg font-bold mt-1 text-brand-600">
-              {mevStatus?.operator?.mevEnvironment ?? '–'}
+              {mevStatus?.environment ?? '–'}
             </p>
+            {mevStatus && (
+              <p className="text-xs text-gray-500 mt-1">
+                {mevStatus.certified ? 'Numéro de certification configuré' : 'Non certifié : simulateur / essais seulement'}
+              </p>
+            )}
           </div>
         </div>
 
@@ -104,19 +116,19 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* Operator info */}
-        {mevStatus?.operator && (
+        {/* Operator info (GET /operators/me: no identity number, no authorization code) */}
+        {operator && (
           <div className="card mt-4">
             <h3 className="font-semibold text-gray-900 mb-2">Exploitant</h3>
             <dl className="grid grid-cols-2 gap-2 text-sm">
               <dt className="text-gray-500">Nom</dt>
-              <dd className="text-gray-900">{mevStatus.operator.name}</dd>
-              <dt className="text-gray-500">NEQ</dt>
-              <dd className="text-gray-900">{mevStatus.operator.neq}</dd>
+              <dd className="text-gray-900">{operator.name}</dd>
               <dt className="text-gray-500">Secteur</dt>
-              <dd className="text-gray-900">{mevStatus.operator.sector}</dd>
-              <dt className="text-gray-500">Code autorisation</dt>
-              <dd className="text-gray-900">{mevStatus.operator.authorizationCode}</dd>
+              <dd className="text-gray-900">{operator.sector}</dd>
+              <dt className="text-gray-500">Ville</dt>
+              <dd className="text-gray-900">{operator.city ?? '–'}</dd>
+              <dt className="text-gray-500">Environnement de l’exploitant</dt>
+              <dd className="text-gray-900">{operator.environment}</dd>
             </dl>
           </div>
         )}

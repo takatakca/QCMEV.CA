@@ -46,7 +46,8 @@ Tests use obvious placeholders (`XXXX-XXXX`, `ER0000`, `0000000000TQ0001`).
   address, last document of the device, device / SEV ids and version, login and production times, QR), and its sales
   summary (never displayed) is transmitted every time it is produced.
 * **ASCII requests** — every MEV-WEB request is ASCII text (SW-76 §4.2): accents travel as JSON `\uXXXX` escapes.
-* **Expired certificate** — no invoice and no transmission until it is renewed (423 `certReady`); the queue waits.
+* **Expired certificate** — no invoice (423 `certReady`) and nothing sent with it (TRX, DOC, UTL) until it is renewed;
+  the queue waits. The renewal request (CRT `REM`) is the one request still signed with it (SPEC_GAPS #9).
 * **Receipts** — exact 80 mm text (42 columns), HTML fragment, QR code (SVG + PNG), Revenu Québec's public mentions
   (« PAIEMENT REÇU », « NOTE DE CRÉDIT », « REPRODUCTION », « ***COPIE DU COMMERÇANT*** », « NE PAS REMETTRE AU CLIENT »,
   « ***DOCUMENT DE FORMATION*** », « COMMANDE PAR UNE PLATEFORME NUMÉRIQUE », « Copie électronique ») and `renderHash`.
@@ -142,6 +143,7 @@ checked (ADMIN, MANAGER, CASHIER).
 | `PUT /operators/me` | manager | whitelisted fields; environment change: admin + confirmation |
 | `GET/POST /operators/users`, `POST /operators/users/:id/register` | admin | users, UTL `AJO` / `SUP` / `VAL` |
 | `POST /operators/users/sync-mev` | manager | UTL `AJO` for every user not registered yet |
+| `GET/PUT /operators/foodhub-locations`, `DELETE /operators/foodhub-locations/:id` | manager | Food Hub kitchen → SEV device (also creates and registers `FOODHUB-AUTO`); same as the « Cuisines Food Hub » card of the Appareils page |
 | `GET /devices`, `POST /devices`, `GET /devices/:id`, `PUT /devices/:id`, `GET /devices/:id/offline-status`, `POST /devices/:id/flush-queue` | staff / manager | devices (file number and authorization code write-only, frozen once certified) and offline queue |
 | `POST /devices/:id/certificate`, `POST /certificates/request` | manager | CRT (`AJO` first, `REM` after), then UTL for every user on that device |
 | `GET /certificates`, `GET /certificates/active`, `GET /certificates/expiring`, `POST /certificates/renew`, `POST /certificates/:id/revoke` | manager | certificates, renewal now (CRT `REM`) |

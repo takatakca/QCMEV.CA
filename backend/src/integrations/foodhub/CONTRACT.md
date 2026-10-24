@@ -124,7 +124,13 @@ of that SEV: it never signs, never talks to Revenu Québec, and prints **only** 
 * `nomUtil`: the staff member (`user.id` mapped to a QCMEV user `foodhub:<id>` registered with UTL), else `FOODHUB-AUTO`.
 * `noTrans` and `datTrans` are assigned by QCMEV at issuance (per device, per civil day, America/Montreal, with `utc`).
   `occurredAt` is stored for audit. Food Hub's `displayId` is printed as free text only.
-* `locationId` → operator + SEV device via the `LocationMapping` table (in QCMEV's database, never in git).
+* `locationId` → operator + SEV device via the `LocationMapping` table (in QCMEV's database, never in git). The
+  operator's staff set it in the dashboard (« Appareils » → « Cuisines Food Hub ») or through the staff API (JWT,
+  admin / manager): `GET /api/operators/foodhub-locations`, `PUT /api/operators/foodhub-locations`
+  `{tenantId, locationId, deviceId}`, `DELETE /api/operators/foodhub-locations/{id}` (the row stays, inactive; the
+  location's sales then answer 423). `npm run seed:operator` does the same from a file. Linking also creates the
+  operator's `FOODHUB-AUTO` system user (no password, cannot log in) and registers it with UTL as soon as a device is
+  certified. A `(tenantId, locationId)` pair belongs to one operator only (another operator → 409).
 
 ## 6. Idempotency
 
@@ -159,6 +165,20 @@ WEB-SRM error classes: a `codRetour` ending in 0, 1 or 5 means "not recorded": Q
 `=====` blocks), `html`, `electronic` (`null`, or for `ELE` / `PEL`: `{mentions[], lines[], html}`),
 `renderHash = sha256(text80mm joined by "\n")`, `issuedAt`.
 
+What Food Hub may rely on (and what a Food Hub test stand-in must do the same way):
+
+* `noTrans` is an opaque string. Today QCMEV sends `"1"`, `"2"`, `"3"`… per device and per civil day (no date prefix,
+  no padding; the format waits for SW-73). Never parse it; use `qcmevTransactionId` as the unique id.
+* `mevTransactionNumber` is MEV-WEB's `psiNoTrans` as received (our simulator: `SIM` + 9 digits), or `null` while
+  offline. Never build or parse it.
+* A credit note's `mentions` contain « NOTE DE CRÉDIT » (a corrected one « Note de crédit corrigée »), never the
+  original's number. The reference to the original is a **text line** of `text80mm`, before the items:
+  « Réf. : transaction N » then « du AAAA-MM-JJ hh:mm:ss » on the next line (the same on a corrected receipt).
+* `datTrans` of a credit note or a copy (`RPR` / `DUP`) is the moment QCMEV issues it, Montréal civil time with its
+  `utc`, like every transaction; never the original's time and never UTC.
+* Every `text80mm` line is at most 42 characters, and a line is only broken between words: a long name, address, item
+  description or customer name continues on the next line; an item's amount stays on its first line.
+
 Layout (Revenu Québec, SW-76 §4.4.1 and « Exemple de facture – restauration »): name and address, date and number,
 items, subtotal, TPS / TVQ registration numbers, payment mode (credit note: « Crédité à : » and « Date de la remise : »),
 then a `=` line, TPS, TVQ, TOTAL, tip, the mentions, the line `[CODE QR]` (print the QR there), the processing time
@@ -182,8 +202,13 @@ NEQ, the mandatory-billing file number or the authorization code.
 * WEB-SRM unreachable: QCMEV signs locally and answers `offline_pending` with a receipt and a QR; the processing time and
   the MEV-WEB number are each replaced by « PROBLÈME DE COMMUNICATION » (PROVEN); it sends the batch (`transLot`) every `MEV_OFFLINE_FLUSH_SECONDS` once WEB-SRM is back. A network error is
   never stored as a rejection.
-* 48-hour legal limit: QCMEV writes a WARNING audit event at 6 h and CRITICAL at 24 h and at 48 h; Food Hub alerts at
-  15 minutes pending.
+* 48-hour legal limit: QCMEV writes a WARNING audit event at 6 h and CRITICAL at 24 h and at 48 h, for the receipts it
+  has already signed and is still sending (`offline_pending`).
+* Food Hub side (Food Hub `docs/MEV_INTEGRATION.md` §6): a sale or a credit note still waiting in Food Hub's outbox has
+  **no invoice at all** (QCMEV has not recorded it), so Food Hub raises a **CRITICAL** alert after **1 minute** pending
+  (QCMEV silent, 202, 423, 5xx, not certified…), and at once when it is held for a person (rejected, amounts mismatch…)
+  or waits for its payment mode. A copy (`RPR` / `DUP`) waiting is a warning after 15 minutes. A receipt QCMEV signed
+  offline (`offline_pending`) raises nothing in Food Hub: that is QCMEV's 48-hour side above.
 
 ## 9. Test it locally
 

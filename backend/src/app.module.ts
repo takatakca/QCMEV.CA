@@ -21,6 +21,7 @@ import { CertificateLifecycleService } from './certificates/certificate-lifecycl
 import { CertificatesService } from './certificates/certificates.service';
 import { CertificatesController, DevicesController, DevicesService } from './devices/devices';
 import { FoodHubController } from './integrations/foodhub/foodhub.controller';
+import { FoodHubLocationsController, FoodHubLocationsService } from './integrations/foodhub/foodhub-locations';
 import { FoodHubSignatureGuard } from './integrations/foodhub/foodhub.guard';
 import { FoodHubService } from './integrations/foodhub/foodhub.service';
 import { AuditLogService } from './logging/audit-log.service';
@@ -66,6 +67,8 @@ export class AppModule {
       AuthController,
       OperatorRegistrationController,
       OperatorsController,
+      // Staff setup of the Food Hub locations: always mounted (the signed Food Hub API is not).
+      FoodHubLocationsController,
       DevicesController,
       CertificatesController,
       TransactionsController,
@@ -87,6 +90,7 @@ export class AppModule {
       ReceiptService,
       OperatorsService,
       DevicesService,
+      FoodHubLocationsService,
       ReportsService,
       OfflineWatchService,
     ];

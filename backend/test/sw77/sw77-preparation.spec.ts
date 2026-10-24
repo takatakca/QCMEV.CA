@@ -392,7 +392,8 @@ suite('SW-77 preparation suite (database + local simulator; not Revenu Québec S
     expect(await sale(deviceA, [item('Après le job', 800)])).toMatchObject({ mevStatus: 'ACCEPTED' });
   }));
 
-  it('expired certificate: no invoice (423 certReady), nothing transmitted, the queue waits for the renewal', track('EXPIRED')(async () => {
+  let lateUser: any;
+  it('expired certificate: no invoice (423 certReady), nothing transmitted (TRX, DOC, UTL), the queue waits for the renewal', track('EXPIRED')(async () => {
     await ok('POST', '/mev-simulator/_control', { mevDown: true }, '');
     let queued: any;
     try {
@@ -417,12 +418,44 @@ suite('SW-77 preparation suite (database + local simulator; not Revenu Québec S
       expect(rep).toMatchObject({ transmitted: false, notTransmittedReason: 'certificateExpired' });
       expect(rep.display.lines.length).toBeGreaterThan(10); // still displayed
       expect(await prisma.mevRequestLog.count({ where: { operatorId: operatorA, requestType: { in: ['TRX', 'DOC'] } } })).toBe(sentBefore);
+      // UTL is a transmission too: a new user is created but not registered, sync-mev sends nothing, CRITICAL audit.
+      const utlBefore = await prisma.mevRequestLog.count({ where: { operatorId: operatorA, requestType: 'UTL' } });
+      const late = await ok('POST', '/operators/users', { username: `sw77-late-${hex(3)}`, password: `Lte-${hex(10)}`, firstName: 'Luc', role: 'CASHIER' });
+      expect(late.registration).toMatchObject({ status: 'not_registered', reason: expect.stringContaining('expired') });
+      expect(await ok('POST', '/operators/users/sync-mev', {})).toEqual({ registered: [], failed: [late.username] });
+      expect((await api('POST', `/operators/users/${late.id}/register`, { modif: 'AJO' })).body).toMatchObject({ error: 'location_not_ready', field: 'certReady' });
+      expect(await prisma.mevRequestLog.count({ where: { operatorId: operatorA, requestType: 'UTL' } })).toBe(utlBefore);
+      expect(await prisma.auditLog.count({ where: { operatorId: operatorA, eventType: 'MEV_ERROR', severity: 'CRITICAL', description: { startsWith: 'UTL AJO' } } })).toBeGreaterThanOrEqual(3);
+      lateUser = late;
     } finally {
       await prisma.certificate.update({ where: { id: cert.id }, data: { validUntil: cert.validUntil } });
     }
     const flush = await ok('POST', `/devices/${deviceA}/flush-queue`, {});
     expect(flush).toMatchObject({ accepted: 1, pendingCount: 0, offlineMode: false });
     expect((await ok('GET', `/transactions/${queued.id}`)).mevStatus).toBe('ACCEPTED');
+    // Renewed (here: valid again): the waiting user is registered.
+    expect(await ok('POST', '/operators/users/sync-mev', {})).toEqual({ registered: [lateUser.username], failed: [] });
+  }));
+
+  it('Food Hub location linked from the API (no seed CLI): FOODHUB-AUTO created and registered, the location is ready', track('FH-LOCATION')(async () => {
+    const tenantId = 'takatak';
+    const locationId = `SW77_${hex(3)}`;
+    expect(await ok('GET', '/operators/foodhub-locations')).toEqual({ foodhubEnabled: false, locations: [] });
+    const linked = await ok('PUT', '/operators/foodhub-locations', { tenantId, locationId, deviceId: deviceA });
+    expect(linked).toMatchObject({ tenantId, locationId, isActive: true, deviceReady: true, certReady: true, usersReady: true, foodhubAuto: { created: true, registration: 'registered' } });
+    const auto = await prisma.sEVUser.findFirstOrThrow({ where: { operatorId: operatorA, externalId: 'foodhub:FOODHUB-AUTO' } });
+    expect(auto).toMatchObject({ role: 'SYSTEM', passwordHash: null, mevUserName: 'FOODHUB-AUTO' });
+    expect(auto.mevRegisteredAt).not.toBeNull();
+    expect(await prisma.locationMapping.findUniqueOrThrow({ where: { tenantId_locationId: { tenantId, locationId } } })).toMatchObject({ operatorId: operatorA, deviceId: deviceA, isActive: true });
+    // Operator B can neither take it nor link a location to A's device; a bad body is refused.
+    expect((await api('PUT', '/operators/foodhub-locations', { tenantId, locationId, deviceId: deviceB }, tokenB)).status).toBe(409);
+    expect((await api('PUT', '/operators/foodhub-locations', { tenantId, locationId: `${locationId}_B`, deviceId: deviceA }, tokenB)).status).toBe(404);
+    expect((await api('PUT', '/operators/foodhub-locations', { tenantId: 'Bad Tenant', locationId, deviceId: deviceA })).status).toBe(400);
+    // Unlink: kept, inactive, listed as such.
+    const off = await ok('DELETE', `/operators/foodhub-locations/${linked.id}`);
+    expect(off).toMatchObject({ id: linked.id, isActive: false });
+    expect((await ok('GET', '/operators/foodhub-locations')).locations).toEqual([expect.objectContaining({ id: linked.id, isActive: false })]);
+    expect((await api('DELETE', `/operators/foodhub-locations/${linked.id}`, undefined, tokenB)).status).toBe(404);
   }));
 
   it('a stored transaction that fails the runtime check is never sent: REJECTED, queue FAILED, CRITICAL audit', track('PAYLOAD')(async () => {
