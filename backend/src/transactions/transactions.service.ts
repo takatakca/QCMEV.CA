@@ -354,7 +354,7 @@ export class TransactionsService {
           montantPourboire:       transaction.tipsAmount ? Number(transaction.tipsAmount) : undefined,
           modePaiement:           PAYMENT_MAP[transaction.paymentMode as PaymentMode],
           modeImpression:         PRINT_MAP[transaction.printMode as PrintMode],
-          tableNumber:            transaction.tableNumber,
+          numeroTable:            transaction.tableNumber,
           nombreCouverts:         transaction.numberOfCovers,
           hashChaine:             transaction.hashChain,
           identifiantUtilisateur: user.mevUserId,

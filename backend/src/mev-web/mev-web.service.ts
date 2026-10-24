@@ -123,7 +123,7 @@ export class MevWebService {
           data: { status: 'PROCESSING', lastAttemptAt: new Date() },
         });
 
-        const payload = item.payload as TransactionRequestPayload;
+        const payload = item.payload as unknown as TransactionRequestPayload;
         const operatorId = item.device.operatorId;
         const signed = await this.signAndPrepare(operatorId, payload);
         await this.sendToMevWeb<TransactionResponse>(

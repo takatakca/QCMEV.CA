@@ -29,6 +29,7 @@
     "@nestjs/platform-express": "^10.0.0",
     "@nestjs/schedule":     "^4.0.0",
     "@prisma/client":       "^5.0.0",
+    "@nestjs/axios":        "^3.0.0",
     "axios":                "^1.6.0",
     "bcrypt":               "^5.1.0",
     "node-forge":           "^1.3.1",

@@ -22,11 +22,9 @@ export class DevicesService {
     return this.prisma.device.create({
       data: {
         operatorId,
-        name:            data.name,
+        description:     data.name ?? '',
         serialNumber:    data.serialNumber,
         deviceType:      data.deviceType as any,
-        model:           data.model,
-        firmwareVersion: data.firmwareVersion,
       },
     });
   }
@@ -55,6 +53,6 @@ export class DevicesService {
   async getOfflineStatus(deviceId: string) {
     const device = await this.prisma.device.findUnique({ where: { id: deviceId } });
     const queueSize = await this.prisma.offlineQueue.count({ where: { deviceId, status: 'PENDING' } });
-    return { offlineMode: device?.offlineMode, offlineSince: device?.offlineSince, pendingCount: queueSize };
+    return { offlineMode: device?.offlineMode, lastSyncAt: device?.lastSyncAt, pendingCount: queueSize };
   }
 }

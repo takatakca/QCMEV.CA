@@ -110,7 +110,7 @@ export class CertificatesService {
         subject: cert.subject.getField('CN')?.value ?? '',
         issuer: cert.issuer.getField('CN')?.value ?? '',
         validFrom: cert.validity.notBefore,
-        validUntil: cert.validity.notAfter,
+        validTo: cert.validity.notAfter,
         pemCertificate: certPem,
         encryptedPrivateKey,
         mevKeyId,
@@ -121,6 +121,13 @@ export class CertificatesService {
     // Warm the cache
     certCache.delete(operatorId);
     this.logger.log(`Certificate stored for operator ${operatorId} (expires ${cert.validity.notAfter})`);
+  }
+
+  /** Return the raw DB certificate record (for controller serialisation). */
+  async getActiveCertRecord(operatorId: string) {
+    return this.prisma.certificate.findFirst({
+      where: { operatorId, isActive: true },
+    });
   }
 
   async getActiveOperatorCert(operatorId: string): Promise<{ cert: string; privateKey: forge.pki.rsa.PrivateKey } | null> {
@@ -246,12 +253,12 @@ export class CertificatesService {
 
   // ─── Certificate Lifecycle ────────────────────────────────────────────────
 
-  async getExpiringCertificates(daysBeforeExpiry = 30): Promise<Array<{ operatorId: string; validUntil: Date }>> {
+  async getExpiringCertificates(daysBeforeExpiry = 30): Promise<Array<{ operatorId: string; validTo: Date }>> {
     const threshold = new Date();
     threshold.setDate(threshold.getDate() + daysBeforeExpiry);
     return this.prisma.certificate.findMany({
-      where: { isActive: true, validUntil: { lte: threshold } },
-      select: { operatorId: true, validUntil: true },
+      where: { isActive: true, validTo: { lte: threshold } },
+      select: { operatorId: true, validTo: true },
     });
   }
 

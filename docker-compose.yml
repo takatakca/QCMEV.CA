@@ -37,16 +37,13 @@ services:
       JWT_SECRET: CHANGE-THIS-IN-PRODUCTION-USE-A-LONG-RANDOM-STRING
       PRIVATE_KEY_ENCRYPTION_KEY: CHANGE-THIS-32-CHAR-KEY-IN-PROD!!
       FRONTEND_URL: http://localhost:3000
-      NODE_ENV: development
+      NODE_ENV: production
       # Set to SIMULATOR to use the built-in simulator instead of real MEV-WEB
       MEV_ENVIRONMENT: SIMULATOR
     ports:
       - "3001:3001"
-    volumes:
-      - ./backend:/app
-      - /app/node_modules
     command: >
-      sh -c "npx prisma migrate deploy && npm run start:dev"
+      sh -c "npx prisma migrate deploy && node dist/main"
 
   # ─────────────────────────────────────────────────────────────
   # Next.js frontend
@@ -60,13 +57,9 @@ services:
       - backend
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:3001
-      NODE_ENV: development
+      NODE_ENV: production
     ports:
       - "3000:3000"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-      - /app/.next
 
 volumes:
   postgres-data:

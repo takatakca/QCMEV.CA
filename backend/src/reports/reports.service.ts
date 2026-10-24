@@ -76,20 +76,20 @@ export class ReportsService {
     const report = await this.prisma.userReport.create({
       data: {
         operatorId,
-        year,
-        reportType:        'ANNUAL_USER_REPORT',
-        mevDocumentNumber: response.numeroDocument,
+        reportYear: year,
+        reportType:        'USER_REPORT',
+        mevReportNumber:   response.numeroDocument,
         submittedAt:       new Date(),
         totalSales,
         totalTps,
         totalTvq,
-        transactionCount:  txs.length,
+        totalTransactions: txs.length,
       },
     });
 
     await this.auditLog.log({
       operatorId,
-      eventType:  AuditEventType.REPORT_SUBMITTED,
+      eventType:  AuditEventType.USER_REPORT_GENERATED,
       severity:   LogSeverity.INFO,
       description: `Rapport annuel ${year} soumis: ${response.numeroDocument}`,
     });
@@ -100,7 +100,7 @@ export class ReportsService {
   async listReports(operatorId: string) {
     return this.prisma.userReport.findMany({
       where: { operatorId },
-      orderBy: { year: 'desc' },
+      orderBy: { reportYear: 'desc' },
     });
   }
 }

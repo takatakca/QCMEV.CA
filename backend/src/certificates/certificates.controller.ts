@@ -21,15 +21,15 @@ export class CertificatesController {
   /** Get active certificate for the operator */
   @Get('active')
   async getActive(@Request() req: any) {
-    const cert = await this.certificatesService.getActiveOperatorCert(req.user.operatorId);
-    if (!cert) return { status: 'none', message: 'No active certificate found' };
+    const record = await this.certificatesService.getActiveCertRecord(req.user.operatorId);
+    if (!record) return { status: 'none', message: 'No active certificate found' };
     return {
-      id: cert.id,
-      serialNumber: cert.serialNumber,
-      subject: cert.subject,
-      validFrom: cert.validFrom,
-      validTo: cert.validTo,
-      type: cert.type,
+      id:           record.id,
+      serialNumber: record.serialNumber,
+      subject:      record.subject,
+      validFrom:    record.validFrom,
+      validTo:      record.validTo,
+      type:         record.type,
     };
   }
 
@@ -43,33 +43,38 @@ export class CertificatesController {
   @Post('request')
   @HttpCode(HttpStatus.CREATED)
   async requestCertificate(@Request() req: any, @Body() body: any) {
-    const { csr, privateKeyEncrypted } = await this.certificatesService.generateKeyPairAndCSR(
+    const { csrPem, encryptedPrivateKey } = await this.certificatesService.generateKeyPairAndCSR(
       req.user.operatorId,
       body.deviceId,
     );
 
     const response = await this.mevWebService.submitCertificateRequest(req.user.operatorId, {
       entete: {} as any,
-      corps: { csr },
+      corps: {
+        neq:              body.neq ?? '',
+        codeAutorisation: body.codeAutorisation ?? '',
+        secteur:          body.secteur ?? 'R',
+        csrPem,
+      },
     });
 
     await this.certificatesService.storeMevWebCertificate(
       req.user.operatorId,
-      body.deviceId,
-      response.certificat,
-      privateKeyEncrypted,
+      response.certificatPem,
+      encryptedPrivateKey,
+      response.identifiantCle,
     );
 
-    return { message: 'Certificate issued successfully', serialNumber: response.numeroCertificat };
+    return { message: 'Certificate issued successfully', identifiantCle: response.identifiantCle };
   }
 
   /** Revoke the active certificate */
   @Post('revoke')
   @HttpCode(HttpStatus.OK)
   async revoke(@Request() req: any, @Body() body: any) {
-    const cert = await this.certificatesService.getActiveOperatorCert(req.user.operatorId);
-    if (!cert) return { message: 'No active certificate to revoke' };
-    await this.certificatesService.revokeCertificate(cert.id, body?.reason);
+    const record = await this.certificatesService.getActiveCertRecord(req.user.operatorId);
+    if (!record) return { message: 'No active certificate to revoke' };
+    await this.certificatesService.revokeCertificate(record.id);
     return { message: 'Certificate revoked' };
   }
 }

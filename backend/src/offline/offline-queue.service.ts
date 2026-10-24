@@ -11,7 +11,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { MevWebService } from '../mev-web/mev-web.service';
 import { AuditLogService } from '../logging/audit-log.service';
-import { AuditEventType, LogSeverity } from '@prisma/client';
+import { AuditEventType, LogSeverity, MevRequestType } from '@prisma/client';
 
 @Injectable()
 export class OfflineQueueService {
@@ -23,7 +23,7 @@ export class OfflineQueueService {
     private readonly auditLog: AuditLogService,
   ) {}
 
-  async enqueue(deviceId: string, requestType: string, payload: object) {
+  async enqueue(deviceId: string, requestType: MevRequestType, payload: object) {
     return this.prisma.offlineQueue.create({ data: { deviceId, requestType, payload } });
   }
 
@@ -32,12 +32,12 @@ export class OfflineQueueService {
   }
 
   async activateOfflineMode(deviceId: string) {
-    await this.prisma.device.update({ where: { id: deviceId }, data: { offlineMode: true, offlineSince: new Date() } });
+    await this.prisma.device.update({ where: { id: deviceId }, data: { offlineMode: true, lastSyncAt: new Date() } });
     this.logger.warn(`Device ${deviceId} entered offline mode`);
   }
 
   async deactivateOfflineMode(deviceId: string) {
-    await this.prisma.device.update({ where: { id: deviceId }, data: { offlineMode: false, offlineSince: null } });
+    await this.prisma.device.update({ where: { id: deviceId }, data: { offlineMode: false } });
     this.logger.log(`Device ${deviceId} back online`);
   }
 
@@ -54,7 +54,7 @@ export class OfflineQueueService {
 
     await this.auditLog.log({
       operatorId: device.operatorId,
-      eventType:  AuditEventType.OFFLINE_SYNC,
+      eventType:  AuditEventType.BATCH_SUBMITTED,
       severity:   LogSeverity.INFO,
       deviceId,
       description: `Offline queue flushed: ${result.submitted} soumises, ${result.failed} échecs`,
