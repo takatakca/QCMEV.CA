@@ -18,6 +18,7 @@ import { MevWebService } from '../../mev-web/mev-web.service';
 import { OfflineWatchService } from '../../offline/offline-watch.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ReceiptService } from '../../receipts/receipt.service';
+import { saleTotals } from '../../transactions/trans-builder';
 import { LocationNotReadyError, TransactionsService } from '../../transactions/transactions.service';
 import {
   ContractError,
@@ -178,6 +179,7 @@ export class FoodHubService {
 
       const loc = await this.location(info.tenantId, body.locationId);
       const mapped = mapSale(body);
+      if (saleTotals(mapped.draft).taxGap) mapped.warnings.push('taxGap');
       let relatedTransactionId: string | null = null;
       if (body.referenceSaleKey) {
         const ref = await this.findKey(info.tenantId, body.referenceSaleKey);

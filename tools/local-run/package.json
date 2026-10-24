@@ -1,0 +1,12 @@
+{
+  "name": "qcmev-local-run",
+  "private": true,
+  "description": "Local end-to-end run without Docker: embedded PostgreSQL + Takatak MEV backend + local simulator. Test data only.",
+  "type": "module",
+  "scripts": {
+    "e2e": "node run-local.mjs"
+  },
+  "dependencies": {
+    "embedded-postgres": "16.14.0-beta.17"
+  }
+}

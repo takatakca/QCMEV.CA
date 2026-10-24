@@ -41,9 +41,14 @@ export function safeErrorMessage(err: unknown): string {
   if (err && typeof err === 'object') {
     const e = err as { name?: string; code?: string; message?: string };
     const code = e.code ? ` ${e.code}` : '';
-    const firstLine = String(e.message ?? '').split('\n').find((l) => l.trim()) ?? '';
-    const msg = /Invalid `.*` invocation/.test(firstLine) ? 'database call failed' : firstLine;
-    return redactString(`${e.name ?? 'Error'}${code}: ${msg}`.slice(0, 300));
+    const lines = String(e.message ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
+    const first = lines[0] ?? '';
+    const call = first.match(/Invalid `([^`(]+)\(?\)?` invocation/);
+    // Prisma: keep the method name and the final reason line, never the echoed arguments in between.
+    const reason = call ? (lines.length > 1 ? lines[lines.length - 1] : '') : first;
+    const msg = call ? `database call failed (${call[1]})${reason && !reason.startsWith('{') ? `: ${reason}` : ''}` : reason;
+    const scrubbed = msg.replace(/Key \(([^)]*)\)=\([^)]*\)/g, 'Key ($1)=([REDACTED])').replace(/"[^"]{6,}"/g, '"…"');
+    return redactString(`${e.name ?? 'Error'}${code}: ${scrubbed}`.slice(0, 300));
   }
   return redactString(String(err)).slice(0, 300);
 }

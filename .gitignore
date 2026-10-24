@@ -46,3 +46,7 @@ coverage/
 
 # Docker volumes
 postgres-data/
+
+# Local run tool (embedded PostgreSQL) and its temporary output
+tools/local-run/node_modules/
+*.tsbuildinfo

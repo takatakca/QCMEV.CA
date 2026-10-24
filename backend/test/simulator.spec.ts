@@ -1,0 +1,79 @@
+import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { loadConfig } from '../src/config/app-config';
+import { csrBody, generateKeyAndCsr } from '../src/crypto/csr';
+import { certThumbprint, FIRST_PRECED, signP256, verifyP256 } from '../src/crypto/ecdsa';
+import { MevSimulatorService } from '../src/simulator/mev-simulator.service';
+import { buildTransCore, SaleDraft } from '../src/transactions/trans-builder';
+
+const ident = { noTPS: '000000000RT0001', noTVQ: '0000000000TQ0001' };
+const headers = { envirn: 'DEV', apprlinit: 'SRV', idsev: 'a', idversi: 'b', codcertif: 'c', idpartn: 'd', versi: 'e', versiparn: 'f' };
+const draft: SaleDraft = {
+  documentKind: 'RECEIPT', typTrans: 'RFER', modImpr: 'FAC', formImpr: 'PAP', modTrans: 'OPE', typServ: 'LVT', ecommerce: false, modPai: 'AUT',
+  lines: [{ description: 'Poutine', quantity: '1', unitPriceCents: 1299, totalCents: 1299, tax: 'FP', activity: 'RES' }],
+};
+
+describe('local simulator: CRT with a throwaway CA, UTL, TRX with signature and chain checks', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qcmev-sim-test-'));
+  const cfg = loadConfig({ JWT_SECRET: crypto.randomBytes(32).toString('hex'), PRIVATE_KEY_ENCRYPTION_KEY: crypto.randomBytes(32).toString('hex'), MEV_SIMULATOR_STATE_DIR: dir });
+  const sim = new MevSimulatorService(cfg);
+  let key: crypto.KeyObject;
+  let certPem: string;
+  let idApprl: string;
+
+  afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const signedHeaders = (raw: string) => ({ ...headers, idapprl: idApprl, signatransm: signP256(key, raw), emprcertiftransm: certThumbprint(certPem) });
+
+  it('CRT: verifies the ECDSA CSR and returns an X.509 certificate for our key', async () => {
+    const { csrPem, privateKeyPem } = await generateKeyAndCsr({ utcOffset: '-04:00', nickname: 'Certificat E2E-A', sector: 'RBC', authorizationCode: 'XXXX-XXXX', noTVQ: ident.noTVQ, neq: '0000000000', fileNumber: 'ER0000' });
+    key = crypto.createPrivateKey(privateKeyPem);
+    const bad = await sim.enrolement({ ...headers, codautori: 'WRONG', notps: 'x', notvq: 'y' }, { reqCertif: { modif: 'AJO', csr: csrBody(csrPem) } });
+    expect(bad.status).toBe(400);
+    const res = await sim.enrolement({ ...headers, codautori: 'XXXX-XXXX', notps: 'x', notvq: 'y' }, { reqCertif: { modif: 'AJO', csr: csrBody(csrPem) } });
+    expect(res.status).toBe(200);
+    const r = (res.body as { retourCertif: { idApprl: string; certif: string; certifPSI: string } }).retourCertif;
+    idApprl = r.idApprl;
+    certPem = `-----BEGIN CERTIFICATE-----\n${r.certif.match(/.{1,64}/g)!.join('\n')}\n-----END CERTIFICATE-----\n`;
+    const x = new crypto.X509Certificate(certPem);
+    expect(x.subject).toContain('O=RBC-XXXX-XXXX');
+    expect(x.issuer).toContain('NOT REVENU QUEBEC');
+    expect(verifyP256(certPem, 'abc', signP256(key, 'abc'))).toBe(true);
+  });
+
+  it('UTL AJO registers the user; an unsigned request is refused', () => {
+    const body = { reqUtil: { modif: 'AJO', nomUtil: 'FOODHUB-AUTO', noTax: ident.noTVQ } };
+    const raw = JSON.stringify(body);
+    expect(() => sim.utilisateur({ ...signedHeaders(raw), signatransm: signP256(crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey, raw) }, raw, body)).toThrow();
+    expect(sim.utilisateur(signedHeaders(raw), raw, body).status).toBe(200);
+  });
+
+  let first = '';
+  it('TRX: accepts a signed transaction and returns psiNoTrans', () => {
+    const { core, signedString } = buildTransCore(draft, { noTrans: '1', datTrans: '20261024120000', utc: '-04:00', datActu: '20261024120000', nomUtil: 'FOODHUB-AUTO', preced: FIRST_PRECED }, ident);
+    first = signP256(key, signedString);
+    const body = { reqTrans: { transActu: { ...core, signa: { actu: first, preced: FIRST_PRECED, datActu: core.datTrans }, noDossFO: 'ER0000', ...ident } } };
+    const raw = JSON.stringify(body);
+    const res = sim.transaction(signedHeaders(raw), raw, body as never);
+    const item = (res.body as { retourTrans: { retourTransActu: { psiNoTrans?: string; listErr: unknown[] } } }).retourTrans.retourTransActu;
+    expect(item.listErr).toEqual([]);
+    expect(item.psiNoTrans).toMatch(/^SIM\d+$/);
+  });
+
+  it('TRX: refuses a broken chain, a reused number and a wrong total', () => {
+    const send = (noTrans: string, preced: string, tamper = false) => {
+      const { core, signedString } = buildTransCore(draft, { noTrans, datTrans: '20261024120500', utc: '-04:00', datActu: '20261024120500', nomUtil: 'FOODHUB-AUTO', preced }, ident);
+      const t = { ...core, signa: { actu: signP256(key, signedString), preced, datActu: core.datTrans }, noDossFO: 'ER0000', ...ident };
+      if (tamper) t.mont = { ...t.mont, apresTax: '99.99' };
+      const body = { reqTrans: { transActu: t } };
+      const raw = JSON.stringify(body);
+      const res = sim.transaction(signedHeaders(raw), raw, body as never);
+      return ((res.body as { retourTrans: { retourTransActu: { listErr: Array<{ id: string }> } } }).retourTrans.retourTransActu.listErr).map((e) => e.id);
+    };
+    expect(send('2', FIRST_PRECED)).toContain('SIM-SIGNA-PRECED');
+    expect(send('1', first)).toContain('SIM-NOTRANS-DUP');
+    expect(send('3', first, true)).toEqual(expect.arrayContaining(['SIM-MONT-APRESTAX']));
+  });
+});
