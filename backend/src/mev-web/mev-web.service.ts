@@ -21,7 +21,10 @@ import {
   isTransientMevError,
 } from './dto/mev-web.dto';
 import { assertTransactionPayload } from './payload-validator';
+import { MevWebHeader } from './dto/mev-web.dto';
+import { quebecCivilDate, quebecTime } from './mev-time';
 import {
+  Operator,
   MevEnvironment,
   MevRequestType,
   AuditEventType,
@@ -58,6 +61,32 @@ export class MevWebService {
     private readonly certificatesService: CertificatesService,
     private readonly auditLogService: AuditLogService,
   ) {}
+
+  // ─── Header ────────────────────────────────────────────────────────────────
+
+  /**
+   * Build the MEV-WEB request header (entete) for any request type.
+   * Single source of truth — CRT, UTL, TRX and DOC all use it, so no request
+   * ever leaves with an empty header. dateCivile / heureDebut are Québec local.
+   * The signature is filled later by signAndPrepare().
+   */
+  buildHeader(
+    operator: Pick<Operator, 'id' | 'sevCertificationCode' | 'sevVersion'>,
+    typeRequete: MevRequestTypeCode,
+    opts: { numeroAppareil?: string; typeAppareil?: string; dateCivile?: string; at?: Date } = {},
+  ): MevWebHeader {
+    const at = opts.at ?? new Date();
+    return {
+      typeRequete,
+      codeSEV:        operator.sevCertificationCode ?? 'DEV-CODE',
+      versionSEV:     operator.sevVersion,
+      typeAppareil:   opts.typeAppareil ?? 'SERVEUR',
+      numeroAppareil: opts.numeroAppareil ?? operator.id,
+      dateCivile:     opts.dateCivile ?? quebecCivilDate(at),
+      heureDebut:     quebecTime(at),
+      signature:      '',
+    };
+  }
 
   // ─── Public Methods ────────────────────────────────────────────────────────
 

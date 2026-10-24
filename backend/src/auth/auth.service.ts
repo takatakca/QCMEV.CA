@@ -9,12 +9,13 @@
  * they can authenticate transactions on certified devices.
  */
 
-import { Injectable, UnauthorizedException, Logger } from '@nestjs/common';
+import { Injectable, UnauthorizedException, Logger, BadRequestException, ConflictException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditLogService } from '../logging/audit-log.service';
-import { AuditEventType, LogSeverity } from '@prisma/client';
+import { AuditEventType, LogSeverity, UserRole } from '@prisma/client';
+import { MevRequestTypeCode, SectorCode, UserRequestPayload } from '../mev-web/dto/mev-web.dto';
 import { MevWebService } from '../mev-web/mev-web.service';
 
 // Map NestJS/DB role names → MEV-WEB roleUtilisateur values
@@ -75,18 +76,22 @@ export class AuthService {
 
   // ─── User Management ────────────────────────────────────────────────────────
 
+  /** Never return the bcrypt hash to API clients */
+  private toPublicUser<T extends { passwordHash?: string }>(user: T): Omit<T, 'passwordHash'> {
+    const { passwordHash: _omit, ...rest } = user;
+    return rest;
+  }
+
   /**
-   * Create a new SEV user and register them with MEV-WEB (UTL request).
+   * Create a new SEV user and register them with MEV-WEB (UTL request, SW-76 §3.4).
    *
-   * Per SW-76 §3.4, every SEV operator user must be declared to MEV-WEB
-   * before they can initiate certified transactions. This method:
-   *  1. Creates the user record in PostgreSQL.
-   *  2. Submits a UTL request to MEV-WEB.
-   *  3. Saves the returned identifiantUtilisateur as mevUserId.
+   *  1. Validates role + username uniqueness, creates the user in PostgreSQL.
+   *  2. Submits a UTL request (unless skipMev — e.g. at operator registration,
+   *     before any certificate exists) and stores identifiantUtilisateur.
    *
-   * If the UTL request fails (e.g., operator has no active certificate yet
-   * during initial setup), the error is logged but user creation still
-   * succeeds — the mevUserId will be null until manually re-submitted.
+   * A failed UTL is non-fatal: the user exists with mevUserId = null and is picked
+   * up by syncMevUsers() — called automatically once a certificate is stored,
+   * or manually via POST /api/operators/users/sync-mev.
    */
   async createUser(
     operatorId: string,
@@ -97,8 +102,18 @@ export class AuthService {
       lastName:  string;
       role:      string;
     },
+    opts: { skipMev?: boolean } = {},
   ) {
-    // 1. Hash password and create the DB record
+    const role = String(data.role ?? '').toUpperCase();
+    if (!Object.values(UserRole).includes(role as UserRole)) {
+      throw new BadRequestException(`Invalid role "${data.role}". Expected one of: ${Object.values(UserRole).join(', ')}`);
+    }
+    if (!data.username?.trim() || !data.password || data.password.length < 8) {
+      throw new BadRequestException('username is required and password must be at least 8 characters');
+    }
+    const existing = await this.prisma.sEVUser.findUnique({ where: { username: data.username } });
+    if (existing) throw new ConflictException(`Username "${data.username}" is already taken`);
+
     const hash = await bcrypt.hash(data.password, 12);
     const user = await this.prisma.sEVUser.create({
       data: {
@@ -106,60 +121,91 @@ export class AuthService {
         username:     data.username,
         passwordHash: hash,
         firstName:    data.firstName,
-        lastName:     data.lastName,
-        role:         data.role as any,
+        lastName:     data.lastName ?? '',
+        role:         role as UserRole,
       },
     });
 
-    // 2. Fetch operator for NEQ + authorization code + sector (needed by UTL)
-    try {
-      const operator = await this.prisma.operator.findUnique({ where: { id: operatorId } });
-      if (!operator) {
-        this.logger.warn(`UTL skipped — operator ${operatorId} not found`);
-        return user;
-      }
+    await this.auditLog.log({
+      operatorId,
+      eventType:   AuditEventType.USER_REGISTERED,
+      severity:    LogSeverity.INFO,
+      userId:      user.id,
+      entityId:    user.id,
+      entityType:  'SEVUser',
+      description: `Utilisateur ${user.username} (${role}) créé`,
+    });
 
-      // 3. Build the UTL payload (SW-11 §4.2)
-      const utlPayload = {
-        entete: {} as any, // signAndPrepare fills this in MevWebService
+    if (opts.skipMev) return this.toPublicUser(user);
+
+    const mevUserId = await this.registerUserWithMev(user.id);
+    return this.toPublicUser({ ...user, mevUserId: mevUserId ?? user.mevUserId });
+  }
+
+  /**
+   * Send the UTL request for one existing user and persist identifiantUtilisateur.
+   * Returns the MEV user id, or null if MEV-WEB refused / was unreachable (logged + audited).
+   */
+  async registerUserWithMev(userId: string): Promise<string | null> {
+    const user = await this.prisma.sEVUser.findUnique({ where: { id: userId }, include: { operator: true } });
+    if (!user) return null;
+    if (user.mevUserId) return user.mevUserId;
+    const operator = user.operator;
+
+    try {
+      const utlPayload: UserRequestPayload = {
+        entete: this.mevWebService.buildHeader(operator, MevRequestTypeCode.UTL),
         corps: {
           neq:               operator.neq,
-          codeAutorisation:  operator.authorizationCode,
-          secteur:           operator.sector as any,
-          prenomUtilisateur: data.firstName,
-          nomUtilisateur:    data.lastName,
-          roleUtilisateur:   ROLE_TO_MEV[data.role.toUpperCase()] ?? 'CAISSIER',
+          codeAutorisation:  operator.authorizationCode ?? '',
+          secteur:           operator.sector as unknown as SectorCode,
+          prenomUtilisateur: user.firstName,
+          nomUtilisateur:    user.lastName,
+          roleUtilisateur:   ROLE_TO_MEV[user.role] ?? 'CAISSIER',
         },
       };
 
-      // 4. Submit UTL to MEV-WEB
-      const utlResponse = await this.mevWebService.submitUserRequest(operatorId, utlPayload);
-
-      // 5. Persist the identifiantUtilisateur returned by MEV-WEB
-      if (utlResponse?.identifiantUtilisateur) {
-        await this.prisma.sEVUser.update({
-          where: { id: user.id },
-          data:  { mevUserId: utlResponse.identifiantUtilisateur },
-        });
-        this.logger.log(
-          `UTL registered — user ${user.username} → identifiantUtilisateur ${utlResponse.identifiantUtilisateur}`,
-        );
-        return { ...user, mevUserId: utlResponse.identifiantUtilisateur };
+      const utlResponse = await this.mevWebService.submitUserRequest(operator.id, utlPayload);
+      if (!utlResponse?.identifiantUtilisateur) {
+        throw new Error(`MEV-WEB returned no identifiantUtilisateur (codeRetour ${utlResponse?.codeRetour ?? '?'})`);
       }
+
+      await this.prisma.sEVUser.update({
+        where: { id: user.id },
+        data:  { mevUserId: utlResponse.identifiantUtilisateur },
+      });
+      this.logger.log(`UTL registered — ${user.username} → ${utlResponse.identifiantUtilisateur}`);
+      return utlResponse.identifiantUtilisateur;
     } catch (err: any) {
-      // Non-fatal: user is created, UTL will need to be re-submitted later
       this.logger.warn(
-        `UTL submission failed for user ${data.username} (operator ${operatorId}): ${err?.message ?? err}. ` +
-        'User created without mevUserId — re-submit UTL after certificate is active.',
+        `UTL failed for ${user.username} (operator ${operator.id}): ${err?.message ?? err} — will retry via syncMevUsers()`,
       );
       await this.auditLog.log({
-        operatorId,
+        operatorId:  operator.id,
         eventType:   AuditEventType.MEV_SUBMISSION_FAILED,
         severity:    LogSeverity.WARNING,
-        description: `UTL submission failed for user ${data.username}: ${err?.message ?? err}`,
+        userId:      user.id,
+        description: `UTL submission failed for user ${user.username}: ${err?.message ?? err}`,
       });
+      return null;
     }
+  }
 
-    return user;
+  /**
+   * (Re)send UTL for every active user of the operator that has no mevUserId yet.
+   * Without a mevUserId, every TRX for that user is refused (identifiantUtilisateur).
+   */
+  async syncMevUsers(operatorId: string): Promise<{ registered: string[]; failed: string[] }> {
+    const users = await this.prisma.sEVUser.findMany({
+      where: { operatorId, isActive: true, mevUserId: null },
+      orderBy: { createdAt: 'asc' },
+    });
+    const registered: string[] = [];
+    const failed: string[] = [];
+    for (const u of users) {
+      const id = await this.registerUserWithMev(u.id);
+      (id ? registered : failed).push(u.username);
+    }
+    return { registered, failed };
   }
 }

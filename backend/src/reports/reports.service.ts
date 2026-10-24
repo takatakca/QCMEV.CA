@@ -9,7 +9,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { MevWebService } from '../mev-web/mev-web.service';
 import { AuditLogService } from '../logging/audit-log.service';
-import { SectorCode } from '../mev-web/dto/mev-web.dto';
+import { SectorCode, MevRequestTypeCode } from '../mev-web/dto/mev-web.dto';
 import { AuditEventType, LogSeverity } from '@prisma/client';
 
 @Injectable()
@@ -43,16 +43,7 @@ export class ReportsService {
     // Submit to MEV-WEB
     const now = new Date();
     const payload: any = {
-      entete: {
-        typeRequete:    'DOC',
-        codeSEV:        operator.sevCertificationCode ?? 'DEV-CODE',
-        versionSEV:     operator.sevVersion,
-        typeAppareil:   'SERVEUR',
-        numeroAppareil: operator.id,
-        dateCivile:     now.toISOString().slice(0, 10).replace(/-/g, ''),
-        heureDebut:     now.toTimeString().replace(/\D/g, '').slice(0, 6),
-        signature:      '',
-      },
+      entete: this.mevWebService.buildHeader(operator, MevRequestTypeCode.DOC),
       corps: {
         typeDocument:  'RUT',
         neq:           operator.neq,

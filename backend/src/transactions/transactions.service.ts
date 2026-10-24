@@ -23,7 +23,9 @@ import {
   FournitureItem,
   TaxCode,
   isTransientMevError,
+  MevRequestTypeCode,
 } from '../mev-web/dto/mev-web.dto';
+import { quebecCivilDate } from '../mev-web/mev-time';
 import {
   TransactionType,
   TransactionStatus,
@@ -349,18 +351,12 @@ export class TransactionsService {
     user: any,
     items: any[],
   ): TransactionRequestPayload {
-    const now = new Date();
     return {
-      entete: {
-        typeRequete:    'TRX' as any,
-        codeSEV:        operator.sevCertificationCode ?? 'DEV-CODE',
-        versionSEV:     operator.sevVersion,
+      entete: this.mevWebService.buildHeader(operator, MevRequestTypeCode.TRX, {
         typeAppareil:   'CAISSEENREGISTREUSE',
         numeroAppareil: transaction.deviceId,
         dateCivile:     transaction.civilDate,
-        heureDebut:     now.toTimeString().replace(/\D/g, '').slice(0, 6),
-        signature:      '', // Will be filled by MevWebService.signAndPrepare()
-      },
+      }),
       corps: {
         neq:             operator.neq,
         codeAutorisation: operator.authorizationCode ?? '',
@@ -394,8 +390,9 @@ export class TransactionsService {
     };
   }
 
+  /** Québec local civil date — NOT UTC (see mev-time.ts) */
   private getCivilDate(): string {
-    return new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    return quebecCivilDate();
   }
 
   private async ensureInvoiced(transactionId: string) {

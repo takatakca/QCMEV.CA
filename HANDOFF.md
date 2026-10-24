@@ -18,7 +18,7 @@
 | 2 | Device model: `offlineSince` + `name`/`model`/`firmwareVersion` | `schema.prisma`, `devices.service.ts` | ✅ done |
 | 3 | Runtime validation of TRX payloads (replaces `as unknown as` cast) | `mev-web/payload-validator.ts` (new), `mev-web.service.ts` | ✅ done |
 | 4 | Migration renamed/regenerated + Docker fixes (see log) | `prisma/migrations/*`, both Dockerfiles, both compose files | ✅ done |
-| 5 | Operator registration endpoint `POST /api/operators/register` | `backend/src/operators/*` | ⏳ pending |
+| 5 | Operator registration flow (public register, UTL headers, MEV user sync) | `operators/*`, `auth.service.ts`, `mev-web.service.ts`, `mev-time.ts` | ✅ done (tested live) |
 | 6 | Certificate renewal cron (auto-renew before `validTo`) | `backend/src/certificates/*`, `backend/src/app.module.ts` | ⏳ pending |
 | 7 | Full build verification (backend + frontend) | — | ⏳ pending |
 
@@ -56,11 +56,21 @@
   - Required env at boot: `DATABASE_URL`, `PRIVATE_KEY_ENCRYPTION_KEY` (getOrThrow), `JWT_SECRET`.
   - **Local test DB recipe** (no Docker in the cloud sandbox): `/usr/lib/postgresql/16/bin/initdb` as user `postgres` in `/var/tmp/qcmev-pgtest`, port 55432, user `takatak`, trust auth → `DATABASE_URL=postgresql://takatak@127.0.0.1:55432/qcmev`.
 
+- 2026-10-24 — Task 5 done, **tested live** against Postgres + built-in simulator.
+  - `operators.controller.ts`: guards per route; `POST /api/operators/register` is public (was 401).
+  - `operators/dto/register-operator.dto.ts` (new): class-validator DTOs — NEQ 10 digits, sector RST/TRP, password ≥ 8, etc. `UpdateOperatorDto` whitelists editable fields (old `update()` passed `mevEnvironment`, a non-existent field, via `as any`).
+  - `operators.service.register()`: operator + first ADMIN created in ONE nested insert (atomic), 409 on duplicate NEQ/username, audit `USER_REGISTERED`.
+  - `auth.service.ts`: `createUser()` validates role/username/password, audits, never returns `passwordHash`; new `registerUserWithMev(userId)` + `syncMevUsers(operatorId)`; UTL uses the shared header.
+  - New `POST /api/operators/users/sync-mev` (JWT).
+  - `MevWebService.buildHeader()` = single header builder (Québec local date/time). Used by TRX, UTL, DOC (CRT in task 6).
+  - Live results: invalid body → 400 with messages; register → 201; dup NEQ → 409; login OK; cashier → mevUserId from simulator, no hash; device with model/firmware; sync-mev registers admin, 2nd call no-op.
+  - Note: register is public by design (first-time setup). Consider gating it in PRODUCTION (invite code / env flag) — product decision for Takatak.
+
 ### Findings to fix next (found while reading, not yet done)
-- [ ] **Civil date uses UTC** — `getCivilDate()` in `transactions.service.ts` uses `toISOString()`. A sale at 21:00 in Québec (EDT) gets tomorrow's date. Must use `America/Toronto`. Same for `heureDebut` (`toTimeString()` = container TZ, usually UTC).
+- [x] ~~Civil date uses UTC~~ → fixed in task 5 (`mev-web/mev-time.ts`, `America/Toronto`).
 - [ ] **`numeroTransactionOriginal` sends our internal UUID** (`relatedTransactionId`) instead of the original's MEV transaction number — affects ANN / COR / NDC.
-- [ ] **`POST /operators/register` returns 401** (verified live) — class-level `JwtAuthGuard` → first operator can never register. → task 5
-- [ ] **UTL + CRT send `entete: {} as any`** — header fields never filled; RQ would reject. CRT also uses `secteur ?? 'R'` (invalid) and NEQ from body. → task 5/6
-- [ ] **`POST /operators/users` returns `passwordHash`** to the client. → task 5
-- [ ] No way to re-send UTL after the certificate exists → users keep `mevUserId = null` → every TRX fails. → task 5
+- [x] ~~`POST /operators/register` returns 401~~ → fixed task 5
+- [x] ~~UTL sends empty header~~ → fixed task 5. CRT part → task 6.
+- [x] ~~`POST /operators/users` returns `passwordHash`~~ → fixed task 5
+- [x] ~~No way to re-send UTL~~ → `POST /api/operators/users/sync-mev` + `AuthService.syncMevUsers()`; auto-call after cert storage → task 6
 - [ ] **Tenant isolation:** `devices.controller` update/findById don't check the device belongs to `req.user.operatorId`.
