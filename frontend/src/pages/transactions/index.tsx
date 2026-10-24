@@ -4,15 +4,14 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import Layout from '../../components/Layout';
-import { getDailySummary } from '../../lib/api';
+import { listTransactions } from '../../lib/api';
 
 const STATUS_COLORS: Record<string, string> = {
-  SUBMITTED:       'badge-green',
   ACCEPTED:        'badge-green',
   PENDING:         'badge-yellow',
-  QUEUED_OFFLINE:  'badge-yellow',
-  FAILED:          'badge-red',
-  CANCELLED:       'badge-red',
+  OFFLINE_PENDING: 'badge-yellow',
+  RETRY_BATCH:     'badge-yellow',
+  REJECTED:        'badge-red',
 };
 
 const TX_TYPE_LABELS: Record<string, string> = {
@@ -34,8 +33,8 @@ export default function TransactionsPage() {
   const [error, setError]               = useState('');
 
   useEffect(() => {
-    getDailySummary()
-      .then((r) => setTransactions(r.data.transactions ?? []))
+    listTransactions()
+      .then((r) => setTransactions(r.data ?? []))
       .catch(() => setError('Impossible de charger les transactions'))
       .finally(() => setLoading(false));
   }, []);

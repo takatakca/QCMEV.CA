@@ -1,29 +1,27 @@
 /**
- * Audit Log Service
- * Records all system events for MEV compliance and security auditing.
- * SW-76 §4 requires comprehensive audit trails.
+ * Audit trail (who did what, when). Metadata is redacted before it is written.
  */
-
 import { Injectable, Logger } from '@nestjs/common';
+import { AuditEventType, LogSeverity, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { AuditEventType, LogSeverity } from '@prisma/client';
+import { redact, safeErrorMessage } from '../common/redact';
 
 export interface AuditLogEntry {
-  operatorId?: string;
+  operatorId?: string | null;
   eventType: AuditEventType;
-  severity: LogSeverity;
-  userId?: string;
-  deviceId?: string;
-  entityId?: string;
-  entityType?: string;
+  severity?: LogSeverity;
+  userId?: string | null;
+  deviceId?: string | null;
+  entityId?: string | null;
+  entityType?: string | null;
   description: string;
   metadata?: Record<string, unknown>;
-  ipAddress?: string;
+  ipAddress?: string | null;
 }
 
 @Injectable()
 export class AuditLogService {
-  private readonly logger = new Logger(AuditLogService.name);
+  private readonly logger = new Logger('Audit');
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -31,39 +29,27 @@ export class AuditLogService {
     try {
       await this.prisma.auditLog.create({
         data: {
-          operatorId:  entry.operatorId,
-          eventType:   entry.eventType,
-          severity:    entry.severity,
-          userId:      entry.userId,
-          deviceId:    entry.deviceId,
-          entityId:    entry.entityId,
-          entityType:  entry.entityType,
-          description: entry.description,
-          metadata:    entry.metadata as object,
-          ipAddress:   entry.ipAddress,
+          operatorId: entry.operatorId ?? null,
+          eventType: entry.eventType,
+          severity: entry.severity ?? LogSeverity.INFO,
+          userId: entry.userId ?? null,
+          deviceId: entry.deviceId ?? null,
+          entityId: entry.entityId ?? null,
+          entityType: entry.entityType ?? null,
+          description: redact(entry.description),
+          metadata: entry.metadata ? (redact(entry.metadata) as Prisma.InputJsonValue) : undefined,
+          ipAddress: entry.ipAddress ?? null,
         },
       });
+      if (entry.severity === LogSeverity.CRITICAL || entry.severity === LogSeverity.ERROR) {
+        this.logger.warn(`${entry.eventType}: ${redact(entry.description)}`);
+      }
     } catch (err) {
-      // Audit log failures should never crash the app
-      this.logger.error(`Failed to write audit log: ${err}`);
+      this.logger.error(`audit write failed: ${safeErrorMessage(err)}`);
     }
   }
 
-  async findAll(operatorId: string, filters?: { eventType?: AuditEventType; severity?: LogSeverity; from?: Date; to?: Date }) {
-    return this.prisma.auditLog.findMany({
-      where: {
-        operatorId,
-        ...(filters?.eventType && { eventType: filters.eventType }),
-        ...(filters?.severity && { severity: filters.severity }),
-        ...(filters?.from || filters?.to) && {
-          createdAt: {
-            ...(filters.from && { gte: filters.from }),
-            ...(filters.to && { lte: filters.to }),
-          },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 500,
-    });
+  async findAll(operatorId: string, take = 200) {
+    return this.prisma.auditLog.findMany({ where: { operatorId }, orderBy: { createdAt: 'desc' }, take: Math.min(take, 500) });
   }
 }

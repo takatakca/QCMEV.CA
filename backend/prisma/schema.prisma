@@ -1,8 +1,15 @@
-// Takatak MEV — Prisma Schema
-// Revenu Québec MEV-WEB SEV Integration (SW-76, SW-11, SW-10)
+// Takatak MEV: Prisma schema
+//
+// Sales recording system (SEV) for Revenu Québec WEB-SRM (MEV-WEB), restaurant sector.
+// NOT certified. Field and code names follow Revenu Québec's public pages ("PROVEN");
+// anything marked SPEC must be confirmed against SW-73 / SW-77 once the partner documents arrive.
+//
+// Money is stored in integer cents everywhere. Identity values (NEQ, GST/QST numbers, file number,
+// authorization code) live only in this database, never in git, tests or logs.
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x", "debian-openssl-3.0.x"]
 }
 
 datasource db {
@@ -12,9 +19,10 @@ datasource db {
 
 // ─── Enums ───────────────────────────────────────────────────────────────────
 
+/// sectActi.abrvt. RBC = restaurant, bar, café (PROVEN). TRP = paid passenger transport (SPEC, unused).
 enum SectorType {
-  RST // Restaurant
-  TRP // Transport de personnes
+  RBC
+  TRP
 }
 
 enum DeviceType {
@@ -28,67 +36,122 @@ enum UserRole {
   ADMIN
   MANAGER
   CASHIER
+  SYSTEM
 }
 
 enum CertificateType {
-  OPERATOR // CRT request type
-  DEVICE
+  SEV     // the SEV device certificate (our key pair, issued by MEV-WEB through CRT)
+  MEV_WEB // MEV-WEB's own certificate returned with the CRT answer
 }
 
+/// ENVIRN header values (PROVEN names DEV / ESSAI / PROD) plus our local simulator.
+enum MevEnvironment {
+  SIMULATOR
+  DEV
+  ESSAI
+  PROD
+}
+
+/// typTrans (PROVEN). Credit notes are RFER with negative amounts.
 enum TransactionType {
-  ADDITION // ADD — Regular sale
-  CLOSING_RECEIPT // RFC — Fermeture de compte
-  CREDIT_NOTE // NDC — Note de crédit
-  ESTIMATION // EST — Estimation
-  QUOTE // SOU — Soumission
-  DUPLICATE // DUP — Duplicata
-  REPRODUCTION // REP — Reproduction
-  CANCELLATION // ANN — Annulation
-  CORRECTION // COR — Correction
-  TRAINING // FOR — Formation
+  ADDI // addition (facture originale)
+  ESTM // estimation
+  RFER // reçu de fermeture ou note de crédit
+  SOUM // soumission
+}
+
+/// Internal document kind (drives the receipt mentions).
+enum DocumentKind {
+  RECEIPT
+  CREDIT_NOTE
+  ADDITION
+  ESTIMATE
+  QUOTE
 }
 
 enum TransactionStatus {
-  DRAFT
-  INVOICED
-  CANCELLED
-  CORRECTED
+  ISSUED
+  CREDITED
+  PARTIALLY_CREDITED
 }
 
 enum MevStatus {
-  PENDING
-  SUBMITTED
-  ACCEPTED
-  REJECTED
-  QUEUED_OFFLINE
+  PENDING         // signed and stored, not sent yet
+  ACCEPTED        // MEV-WEB answered without errors
+  OFFLINE_PENDING // MEV-WEB unreachable: signed locally, waits in the offline queue (48 h limit)
+  RETRY_BATCH     // MEV-WEB said "not sent" (codRetour ending in 0, 1 or 5): resent with the next batch
+  REJECTED        // MEV-WEB refused it (other codes): needs a human
 }
 
+/// modPai (PROVEN public names; codes from the 2022 sample, confirm in SW-73).
+/// Public modes still without a confirmed code: coupon, programme de fidélisation, cryptomonnaie,
+/// portefeuille électronique, transfert de fonds, porté au compte (SPEC, not offered yet).
 enum PaymentMode {
-  CASH // ARC — Argent comptant
-  CREDIT_CARD // CRC — Carte de crédit
-  DEBIT_CARD // CRD — Carte de débit
-  CHEQUE // CHQ — Chèque
-  GIFT_CARD // CAD — Carte-cadeau
-  MIXED // CMP — Combiné
-  OTHER // AUT — Autre
+  ARG // argent comptant
+  CHQ // chèque
+  CRE // carte de crédit
+  DEB // carte de débit
+  CPR // certificat-cadeau / carte prépayée
+  MIX // paiement mixte
+  AUT // autre
+  INC // inconnu (bar permit only)
+  AUC // aucun paiement
 }
 
+/// modImpr (PROVEN public modes).
 enum PrintMode {
-  PAPER // PAP
-  ELECTRONIC // ELC
-  NO_PRINT // AUC
+  FAC // facturation
+  RPR // reproduction
+  DUP // duplicata (copie du commerçant)
+  ANN // annulation (abandoned transaction)
+  PSP // parti sans payer
+}
+
+/// formImpr (PROVEN public supports).
+enum PrintFormat {
+  PAP // papier
+  ELE // électronique
+  PEL // papier et électronique
+  NON // non imprimé
+}
+
+/// modTrans (PROVEN): opérationnel or formation.
+enum TransactionMode {
+  OPE
+  FOR
+}
+
+/// sectActi.typServ (PROVEN values).
+enum ServiceType {
+  CMP // service au comptoir
+  LVR // livraison par l'exploitant
+  LVT // commande par une plateforme numérique
+  TBL // service aux tables
+}
+
+enum ItemTax {
+  FP  // TPS + TVQ
+  F   // TPS only
+  P   // TVQ only
+  NON // not taxable
+}
+
+enum ItemActivity {
+  RES // restaurant
+  BAR // bar (permit required)
+  NON // supply not covered by the measures
 }
 
 enum ModificationType {
   ADD_ITEM
   REMOVE_ITEM
   MODIFY_PRICE
-  MODIFY_TAX_CODE
-  MODIFY_QUANTITY
+  CREDIT_NOTE
+  REPRINT
 }
 
 enum ReportType {
-  USER_REPORT // RUT — Rapport d'utilisateur
+  RUT // rapport de l'utilisateur
 }
 
 enum ConventionType {
@@ -98,22 +161,23 @@ enum ConventionType {
 enum AuditEventType {
   TRANSACTION_CREATED
   TRANSACTION_MODIFIED
-  TRANSACTION_CANCELLED
-  TRANSACTION_CORRECTED
+  TRANSACTION_CREDITED
+  TRANSACTION_REPRINTED
   CERTIFICATE_REQUESTED
   CERTIFICATE_RECEIVED
+  CERTIFICATE_REVOKED
   USER_REGISTERED
-  USER_LOGIN
-  USER_LOGIN_FAILED
-  USER_LOGOUT
   USER_REPORT_GENERATED
   OFFLINE_MODE_ACTIVATED
   OFFLINE_MODE_DEACTIVATED
+  OFFLINE_DEADLINE_WARNING
   BATCH_SUBMITTED
-  MEV_SUBMISSION_FAILED
   MEV_ERROR
   AUTH_LOGIN
-  AUTH_LOGOUT
+  AUTH_LOGIN_FAILED
+  SETTINGS_CHANGED
+  INTEGRATION_SALE
+  INTEGRATION_REJECTED
   SYSTEM_ERROR
 }
 
@@ -125,17 +189,10 @@ enum LogSeverity {
 }
 
 enum MevRequestType {
-  CRT // Certificat
-  UTL // Utilisateur
-  TRX // Transaction
-  DOC // Document
-}
-
-enum MevEnvironment {
-  SIMULATOR
-  DEVELOPMENT
-  TESTING
-  PRODUCTION
+  CRT
+  UTL
+  TRX
+  DOC
 }
 
 enum QueueStatus {
@@ -143,31 +200,39 @@ enum QueueStatus {
   PROCESSING
   COMPLETED
   FAILED
-  CANCELLED
+}
+
+enum ExternalSaleKind {
+  SALE
+  CREDIT_NOTE
+  PRINT
+}
+
+enum ExternalSaleStatus {
+  PROCESSING
+  DONE
 }
 
 // ─── Models ──────────────────────────────────────────────────────────────────
 
+/// The legal business. One QCMEV instance can serve several.
 model Operator {
-  id                   String         @id @default(uuid())
-  name                 String
-  neq                  String         @unique // Numéro d'entreprise du Québec
-  tpsNumber            String? // Numéro TPS (set after certificate registration)
-  tvqNumber            String? // Numéro TVQ (set after certificate registration)
-  sector               SectorType
-  authorizationCode    String? // Issued by Revenu Québec
-  serverAuthCode       String? // For multi-restaurant server
-  sevCertificationCode String? // SW-76 §3.1
-  sevVersion           String         @default("1.0.0")
-  address              String?
-  city                 String?
-  province             String?        @default("QC")
-  postalCode           String?
-  phone                String?
-  email                String?
-  environment          MevEnvironment @default(SIMULATOR) // Active MEV-WEB environment
-  createdAt            DateTime       @default(now())
-  updatedAt            DateTime       @updatedAt
+  id          String         @id @default(uuid())
+  name        String
+  neq         String         @unique
+  noTPS       String
+  noTVQ       String
+  sector      SectorType     @default(RBC)
+  address     String?
+  city        String?
+  province    String?        @default("QC")
+  postalCode  String?
+  /// Business contact from the registration form. Never sent to MEV-WEB.
+  phone       String?
+  email       String?
+  environment MevEnvironment @default(SIMULATOR)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
 
   devices               Device[]
   certificates          Certificate[]
@@ -177,74 +242,98 @@ model Operator {
   mevRequestLogs        MevRequestLog[]
   userReports           UserReport[]
   thirdPartyConventions ThirdPartyConvention[]
+  locationMappings      LocationMapping[]
 }
 
+/// One SEV device (mode SEV, APPRLINIT=SEV): one per establishment, with its own certificate and signature chain.
 model Device {
-  id              String     @id @default(uuid())
-  operatorId      String
-  serialNumber    String     @unique
-  deviceType      DeviceType
-  name            String? // Human-readable label (e.g. "Caisse 1")
-  model           String? // Hardware model
-  firmwareVersion String? // Firmware / OS version reported by the device
-  description     String?
-  offlineMode     Boolean    @default(false)
-  offlineSince    DateTime? // When the device entered offline mode (null when online) — SW-76 §4.7
-  lastSyncAt      DateTime? // Last successful sync with MEV-WEB
-  isActive        Boolean    @default(true)
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+  id                   String     @id @default(uuid())
+  operatorId           String
+  serialNumber         String     @unique
+  deviceType           DeviceType @default(SERVER)
+  /// Label (e.g. "Caisse 1"), hardware model and firmware reported by the device. Never sent to MEV-WEB.
+  name                 String?
+  model                String?
+  firmwareVersion      String?
+  description          String?
+  /// noDossFO: the establishment's mandatory-billing file number. Private.
+  fileNumber           String?
+  /// Authorization code for CRT, AES-256-GCM encrypted. Never returned by the API.
+  authorizationCodeEnc String?    @db.Text
+  /// IDAPPRL assigned by MEV-WEB in the CRT answer.
+  mevDeviceId          String?
+  offlineMode          Boolean    @default(false)
+  offlineSince         DateTime?
+  lastSyncAt           DateTime?
+  /// Global sequence of transactions signed on this device (drives the signature chain).
+  lastSeq              Int        @default(0)
+  isActive             Boolean    @default(true)
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
 
-  operator     Operator       @relation(fields: [operatorId], references: [id])
-  transactions Transaction[]
-  offlineQueue OfflineQueue[]
+  operator         Operator          @relation(fields: [operatorId], references: [id])
+  transactions     Transaction[]
+  offlineQueue     OfflineQueue[]
+  certificates     Certificate[]
+  locationMappings LocationMapping[]
 
   @@index([operatorId])
 }
 
 model SEVUser {
-  id           String    @id @default(uuid())
-  operatorId   String
-  username     String    @unique
-  passwordHash String // bcrypt hash
-  firstName    String
-  lastName     String
-  role         UserRole  @default(CASHIER)
-  mevUserId    String? // identifiantUtilisateur returned by MEV-WEB UTL request
-  isActive     Boolean   @default(true)
-  lastLoginAt  DateTime? // Updated on each successful login
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id              String    @id @default(uuid())
+  operatorId      String
+  username        String    @unique
+  /// bcrypt hash; null for system users, which cannot log in.
+  passwordHash    String?
+  firstName       String
+  lastName        String
+  role            UserRole  @default(CASHIER)
+  /// nomUtil registered with MEV-WEB through UTL.
+  mevUserName     String?
+  mevRegisteredAt DateTime?
+  mevUserId       String?
+  /// Link to a user of an integration, e.g. "foodhub:<staff id>" or "foodhub:FOODHUB-AUTO".
+  externalId      String?
+  isActive        Boolean   @default(true)
+  lastLoginAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   operator     Operator      @relation(fields: [operatorId], references: [id])
   transactions Transaction[]
 
+  @@unique([operatorId, externalId])
   @@index([operatorId])
 }
 
 model Certificate {
   id                  String          @id @default(uuid())
   operatorId          String
-  deviceId            String? // Device whose key pair / CSR produced this cert (used for renewal)
+  deviceId            String?
   type                CertificateType
-  serialNumber        String? // Assigned by MEV-WEB
+  serialNumber        String?
   subject             String?
   issuer              String?
+  thumbprint          String?
   validFrom           DateTime?
-  validTo             DateTime? // validUntil — renamed to match service code
+  validUntil          DateTime?
   pemCertificate      String?         @db.Text
-  encryptedPrivateKey String?         @db.Text // AES-256-CBC encrypted
+  /// AES-256-GCM encrypted PKCS#8 private key (SEV certificates only).
+  encryptedPrivateKey String?         @db.Text
   csrPem              String?         @db.Text
-  mevKeyId            String? // MEV-WEB key identifier
   isActive            Boolean         @default(true)
   revokedAt           DateTime?
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
 
   operator Operator @relation(fields: [operatorId], references: [id])
+  device   Device?  @relation(fields: [deviceId], references: [id])
 
   @@index([operatorId])
-  @@index([isActive, validTo])
+  @@index([deviceId])
+  /// Nightly renewal job: active certificates by expiry.
+  @@index([isActive, validUntil])
 }
 
 model Transaction {
@@ -252,75 +341,110 @@ model Transaction {
   operatorId           String
   deviceId             String
   userId               String
-  transactionNumber    Int // Per device per civil day
-  civilDate            String // YYYYMMDD
+  /// Per device, per civil day (America/Montreal), starting at 1.
+  transactionNumber    Int
+  /// noTrans as transmitted.
+  noTrans              String
+  civilDate            String
+  /// datTrans AAAAMMJJhhmmss, local time.
+  datTrans             String
+  /// utc offset of datTrans, -04:00 or -05:00.
+  utcOffset            String
+  /// Order of this transaction in the device's signature chain.
+  deviceSeq            Int
   transactionType      TransactionType
-  status               TransactionStatus @default(DRAFT)
-  subtotal             Decimal           @db.Decimal(12, 4)
-  tpsAmount            Decimal           @db.Decimal(12, 4)
-  tvqAmount            Decimal           @db.Decimal(12, 4)
-  totalAmount          Decimal           @db.Decimal(12, 4)
-  tipsAmount           Decimal?          @db.Decimal(12, 4)
-  discountAmount       Decimal?          @db.Decimal(12, 4)
-  paymentMode          PaymentMode
-  printMode            PrintMode         @default(PAPER)
+  documentKind         DocumentKind
+  transactionMode      TransactionMode   @default(OPE)
+  printMode            PrintMode         @default(FAC)
+  printFormat          PrintFormat       @default(PAP)
+  serviceType          ServiceType?
+  sector               SectorType        @default(RBC)
   tableNumber          String?
   numberOfCovers       Int?
-  taxCode              String? // FP, F, P, or empty
-  hashChain            String? // SHA-256 hash chain
-  mevTransactionNumber String? // Returned by MEV-WEB
-  mevSubmissionStatus  MevStatus         @default(PENDING)
+  ecommerce            Boolean           @default(false)
+  paymentMode          PaymentMode
+  subtotalCents        Int
+  tpsCents             Int
+  tvqCents             Int
+  totalCents           Int
+  tipCents             Int?
+  adjustCents          Int?
+  amountDueCents       Int?
+  status               TransactionStatus @default(ISSUED)
+  mevStatus            MevStatus         @default(PENDING)
+  /// signa.actu: ECDSA P-256 / SHA-256 signature, 88 base64 characters.
+  signature            String
+  /// signa.preced: previous signature on this device (88 "=" for the first one).
+  previousSignature    String
+  /// signa.datActu
+  signedAt             String
+  /// Internal SHA-256 audit chain. Never transmitted.
+  hashChain            String
+  /// The transaction part of the request (identity values excluded), for resend and audit.
+  requestJson          Json
+  mevTransactionNumber String?
+  mevProcessedAt       String?
   mevSubmittedAt       DateTime?
   mevResponse          Json?
-  qrCodeUrl            String?           @db.Text
-  certifiedData        String?           @db.Text
-  isTraining           Boolean           @default(false)
-  relatedTransactionId String? // For cancellations/corrections
-  invoicedAt           DateTime?
+  mevErrors            Json?
+  qrContent            String?           @db.Text
+  mentions             Json?
+  relatedTransactionId String?
+  /// Free text shown on the receipt (e.g. the platform order number).
+  externalRef          String?
+  occurredAt           DateTime?
+  invoicedAt           DateTime          @default(now())
   createdAt            DateTime          @default(now())
   updatedAt            DateTime          @updatedAt
 
   operator      Operator                  @relation(fields: [operatorId], references: [id])
   device        Device                    @relation(fields: [deviceId], references: [id])
   user          SEVUser                   @relation(fields: [userId], references: [id])
+  related       Transaction?              @relation("TransactionReference", fields: [relatedTransactionId], references: [id])
+  referencedBy  Transaction[]             @relation("TransactionReference")
   items         TransactionItem[]
   modifications TransactionModification[]
+  queueEntries  OfflineQueue[]
 
   @@unique([deviceId, civilDate, transactionNumber])
+  @@unique([deviceId, deviceSeq])
   @@index([operatorId])
-  @@index([deviceId])
   @@index([civilDate])
+  @@index([mevStatus])
 }
 
 model TransactionItem {
-  id            String   @id @default(uuid())
-  transactionId String
-  description   String
-  quantity      Decimal  @db.Decimal(10, 4)
-  unitPrice     Decimal  @db.Decimal(12, 4)
-  totalPrice    Decimal  @db.Decimal(12, 4)
-  taxCode       String? // FP, F, P, or empty
-  tpsAmount     Decimal  @db.Decimal(12, 4)
-  tvqAmount     Decimal  @db.Decimal(12, 4)
-  sortOrder     Int      @default(0)
-  createdAt     DateTime @default(now())
+  id             String       @id @default(uuid())
+  transactionId  String
+  ref            String?
+  description    String
+  /// Decimal string, e.g. "1" or "0.5".
+  quantity       String
+  unitPriceCents Int
+  totalCents     Int
+  tax            ItemTax      @default(FP)
+  activity       ItemActivity @default(RES)
+  isModifier     Boolean      @default(false)
+  sortOrder      Int          @default(0)
+  createdAt      DateTime     @default(now())
 
   transaction Transaction @relation(fields: [transactionId], references: [id])
 
   @@index([transactionId])
 }
 
-// SW-76 §4.6 — MANDATORY: All post-invoice modifications must be logged
+/// Every change after invoicing is a real transaction; this table links it to the reason.
 model TransactionModification {
-  id                String           @id @default(uuid())
-  transactionId     String
-  modificationType  ModificationType
-  description       String
-  previousValue     Json?
-  newValue          Json?
-  reason            String?
-  performedByUserId String?
-  performedAt       DateTime         @default(now())
+  id                  String           @id @default(uuid())
+  transactionId       String
+  resultTransactionId String?
+  modificationType    ModificationType
+  description         String
+  previousValue       Json?
+  newValue            Json?
+  reason              String?
+  performedByUserId   String?
+  performedAt         DateTime         @default(now())
 
   transaction Transaction @relation(fields: [transactionId], references: [id])
 
@@ -328,19 +452,20 @@ model TransactionModification {
 }
 
 model UserReport {
-  id                  String     @id @default(uuid())
-  operatorId          String
-  reportType          ReportType
-  reportYear          Int
-  totalSales          Decimal    @db.Decimal(15, 4)
-  totalTps            Decimal    @db.Decimal(15, 4)
-  totalTvq            Decimal    @db.Decimal(15, 4)
-  totalTransactions   Int
-  mevReportNumber     String?
-  mevSubmissionStatus MevStatus  @default(PENDING)
-  submittedAt         DateTime?
-  mevResponse         Json?
-  createdAt           DateTime   @default(now())
+  id                String     @id @default(uuid())
+  operatorId        String
+  reportType        ReportType @default(RUT)
+  reportYear        Int
+  totalSalesCents   Int
+  totalTpsCents     Int
+  totalTvqCents     Int
+  totalTransactions Int
+  previousYearJson  Json?
+  mevReportNumber   String?
+  mevStatus         MevStatus  @default(PENDING)
+  submittedAt       DateTime?
+  mevResponse       Json?
+  createdAt         DateTime   @default(now())
 
   operator Operator @relation(fields: [operatorId], references: [id])
 
@@ -370,8 +495,8 @@ model AuditLog {
   severity    LogSeverity    @default(INFO)
   userId      String?
   deviceId    String?
-  entityId    String? // ID of the related entity
-  entityType  String? // e.g., "Transaction", "Certificate"
+  entityId    String?
+  entityType  String?
   description String
   metadata    Json?
   ipAddress   String?
@@ -384,6 +509,7 @@ model AuditLog {
   @@index([createdAt])
 }
 
+/// Every call to MEV-WEB. Payloads are REDACTED before they are stored.
 model MevRequestLog {
   id              String         @id @default(uuid())
   operatorId      String
@@ -393,7 +519,7 @@ model MevRequestLog {
   responsePayload Json?
   httpStatus      Int?
   mevErrorCode    String?
-  duration        Int? // milliseconds
+  duration        Int?
   success         Boolean?
   createdAt       DateTime       @default(now())
 
@@ -403,24 +529,74 @@ model MevRequestLog {
   @@index([requestType])
 }
 
+/// Transactions waiting for MEV-WEB. The request is rebuilt from the Transaction row.
 model OfflineQueue {
   id            String         @id @default(uuid())
   deviceId      String
-  transactionId String? // Transaction this queued TRX belongs to (updated on successful resubmission)
-  requestType   MevRequestType
-  payload       Json
+  transactionId String?
+  requestType   MevRequestType @default(TRX)
   status        QueueStatus    @default(PENDING)
   attempts      Int            @default(0)
-  maxAttempts   Int            @default(5)
   lastAttemptAt DateTime?
   processedAt   DateTime?
   errorMessage  String?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
-  device Device @relation(fields: [deviceId], references: [id])
+  device      Device       @relation(fields: [deviceId], references: [id])
+  transaction Transaction? @relation(fields: [transactionId], references: [id])
 
   @@index([deviceId])
   @@index([transactionId])
   @@index([status])
+}
+
+// ─── Food Hub integration (contract foodhub.sale.v1) ─────────────────────────
+
+/// Food Hub location (kitchen) → operator + SEV device. Kept in the database, never in git.
+model LocationMapping {
+  id            String   @id @default(uuid())
+  integrationId String   @default("foodhub")
+  tenantId      String
+  locationId    String
+  operatorId    String
+  deviceId      String
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  operator Operator @relation(fields: [operatorId], references: [id])
+  device   Device   @relation(fields: [deviceId], references: [id])
+
+  @@unique([tenantId, locationId])
+}
+
+/// Idempotency record: one row per saleKey / creditKey / printKey.
+model ExternalSale {
+  id            String             @id @default(uuid())
+  tenantId      String
+  key           String
+  kind          ExternalSaleKind
+  saleKey       String
+  payloadHash   String
+  transactionId String?
+  status        ExternalSaleStatus @default(PROCESSING)
+  httpStatus    Int?
+  responseJson  Json?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  @@unique([tenantId, key])
+  @@index([tenantId, saleKey])
+}
+
+/// Replay guard: signed event ids seen in the last 24 h.
+model IntegrationEvent {
+  eventId    String   @id
+  tenantId   String
+  key        String
+  bodyHash   String
+  receivedAt DateTime @default(now())
+
+  @@index([receivedAt])
 }

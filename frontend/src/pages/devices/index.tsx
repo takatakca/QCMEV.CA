@@ -3,7 +3,13 @@
  */
 import React, { useEffect, useState } from 'react';
 import Layout from '../../components/Layout';
-import { listDevices, registerDevice, flushDeviceQueue, getDeviceOfflineStatus } from '../../lib/api';
+import { listDevices, flushDeviceQueue, getDeviceOfflineStatus } from '../../lib/api';
+
+// Devices hold private identity values (file number, authorization code): they are created with
+// `npm run seed:operator` from a file outside the repository, never from the dashboard.
+const registerDevice = async (_: unknown): Promise<never> => {
+  throw { response: { data: { message: 'Les appareils sont créés avec npm run seed:operator (valeurs privées hors du dépôt).' } } };
+};
 
 const DEVICE_TYPES = [
   { value: 'CASH_REGISTER',  label: 'Caisse enregistreuse' },
@@ -57,7 +63,7 @@ export default function DevicesPage() {
     setFlushing(deviceId);
     try {
       const res = await flushDeviceQueue(deviceId);
-      alert(`File vidée — ${res.data.submitted} transaction(s) soumises`);
+      alert(`File vidée — ${res.data.accepted} transaction(s) soumises`);
       loadDevices();
     } catch (err: any) {
       alert(err.response?.data?.message ?? 'Erreur lors du vidage de la file');

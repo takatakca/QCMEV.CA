@@ -1,31 +1,17 @@
-# ─── Stage 1: Build ───────────────────────────────────────────────────────────
-FROM node:20-alpine AS builder
+# Takatak MEV dashboard — production image.
+FROM node:20-alpine AS build
 WORKDIR /app
-
-COPY package*.json ./
-RUN npm ci
-
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
 COPY . .
-# Backend address as seen from INSIDE the Docker network (baked into Next rewrites at build time)
-ARG API_INTERNAL_URL=http://backend:3001
-ENV API_INTERNAL_URL=$API_INTERNAL_URL
-RUN npm run build
+ARG NEXT_PUBLIC_API_URL=http://qcmev-backend:3001
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL NEXT_TELEMETRY_DISABLED=1
+RUN npm run build && npm prune --omit=dev
 
-# ─── Stage 2: Production runtime ──────────────────────────────────────────────
-FROM node:20-alpine AS production
+FROM node:20-alpine
 WORKDIR /app
-
-ENV NODE_ENV=production
-ARG API_INTERNAL_URL=http://backend:3001
-ENV API_INTERNAL_URL=$API_INTERNAL_URL
-
-COPY package*.json ./
-RUN npm ci --omit=dev
-
-# Copy Next.js build output
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/next.config.* ./
-
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
+COPY --from=build /app ./
+USER node
 EXPOSE 3000
-CMD ["npx", "next", "start"]
+CMD ["npm", "start"]
