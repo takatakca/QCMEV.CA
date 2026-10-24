@@ -33,7 +33,8 @@ import {
 
 // MEV-WEB endpoint URLs
 const MEV_URLS: Record<MevEnvironment, string> = {
-  SIMULATOR:   process.env.SIMULATOR_URL || 'http://localhost:3002',
+  // The simulator is a controller inside this same backend (MevSimulatorController)
+  SIMULATOR:   process.env.SIMULATOR_URL || `http://localhost:${process.env.PORT ?? 3001}/api/mev-simulator`,
   DEVELOPMENT: 'https://mev-web-dev.revenuquebec.ca/mev-web/v1',
   TESTING:     'https://mev-web-tst.revenuquebec.ca/mev-web/v1',
   PRODUCTION:  'https://mev-web.revenuquebec.ca/mev-web/v1',

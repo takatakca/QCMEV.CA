@@ -80,8 +80,12 @@ CREATE TABLE "Device" (
     "operatorId" TEXT NOT NULL,
     "serialNumber" TEXT NOT NULL,
     "deviceType" "DeviceType" NOT NULL,
+    "name" TEXT,
+    "model" TEXT,
+    "firmwareVersion" TEXT,
     "description" TEXT,
     "offlineMode" BOOLEAN NOT NULL DEFAULT false,
+    "offlineSince" TIMESTAMP(3),
     "lastSyncAt" TIMESTAMP(3),
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -272,6 +276,7 @@ CREATE TABLE "MevRequestLog" (
 CREATE TABLE "OfflineQueue" (
     "id" TEXT NOT NULL,
     "deviceId" TEXT NOT NULL,
+    "transactionId" TEXT,
     "requestType" "MevRequestType" NOT NULL,
     "payload" JSONB NOT NULL,
     "status" "QueueStatus" NOT NULL DEFAULT 'PENDING',
@@ -347,6 +352,9 @@ CREATE INDEX "MevRequestLog_requestType_idx" ON "MevRequestLog"("requestType");
 CREATE INDEX "OfflineQueue_deviceId_idx" ON "OfflineQueue"("deviceId");
 
 -- CreateIndex
+CREATE INDEX "OfflineQueue_transactionId_idx" ON "OfflineQueue"("transactionId");
+
+-- CreateIndex
 CREATE INDEX "OfflineQueue_status_idx" ON "OfflineQueue"("status");
 
 -- AddForeignKey
@@ -388,13 +396,3 @@ ALTER TABLE "MevRequestLog" ADD CONSTRAINT "MevRequestLog_operatorId_fkey" FOREI
 -- AddForeignKey
 ALTER TABLE "OfflineQueue" ADD CONSTRAINT "OfflineQueue_deviceId_fkey" FOREIGN KEY ("deviceId") REFERENCES "Device"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
-┌─────────────────────────────────────────────────────────┐
-│  Update available 5.22.0 -> 8.0.0-rc.27                 │
-│                                                         │
-│  This is a major update - please follow the guide at    │
-│  https://pris.ly/d/major-version-upgrade                │
-│                                                         │
-│  Run the following to update                            │
-│    npm i --save-dev prisma@latest                       │
-│    npm i @prisma/client@latest                          │
-└─────────────────────────────────────────────────────────┘

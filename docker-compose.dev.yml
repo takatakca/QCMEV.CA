@@ -9,6 +9,10 @@ services:
       - "5432:5432"
 
   backend:
+    # The production stage has no dev tools (nest CLI) — use the full builder stage
+    build:
+      context: ./backend
+      target: builder
     environment:
       NODE_ENV: development
       MEV_ENVIRONMENT: SIMULATOR
@@ -19,6 +23,9 @@ services:
       sh -c "npx prisma migrate deploy && npm run start:dev"
 
   frontend:
+    build:
+      context: ./frontend
+      target: builder
     environment:
       NODE_ENV: development
     volumes:

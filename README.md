@@ -254,7 +254,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 | Environment | URL |
 |-------------|-----|
-| `SIMULATOR` | `http://localhost:3002` (built-in simulator) |
+| `SIMULATOR` | `http://localhost:3001/api/mev-simulator` (built into the backend) |
 | `DEVELOPMENT` | `https://mev.revenuquebec.ca/mev-web/dev` |
 | `TESTING` | `https://mev.revenuquebec.ca/mev-web/test` |
 | `PRODUCTION` | `https://mev.revenuquebec.ca/mev-web` |

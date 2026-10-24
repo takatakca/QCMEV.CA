@@ -40,10 +40,11 @@ services:
       NODE_ENV: production
       # Set to SIMULATOR to use the built-in simulator instead of real MEV-WEB
       MEV_ENVIRONMENT: SIMULATOR
+      # The simulator is served by this same backend container
+      SIMULATOR_URL: http://localhost:3001/api/mev-simulator
     ports:
       - "3001:3001"
-    command: >
-      sh -c "npx prisma migrate deploy && node dist/main"
+    # Migrations run from the image CMD: `prisma migrate deploy && node dist/main`
 
   # ─────────────────────────────────────────────────────────────
   # Next.js frontend
@@ -52,10 +53,13 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        API_INTERNAL_URL: http://backend:3001
     restart: unless-stopped
     depends_on:
       - backend
     environment:
+      API_INTERNAL_URL: http://backend:3001
       NEXT_PUBLIC_API_URL: http://localhost:3001
       NODE_ENV: production
     ports:
