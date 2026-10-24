@@ -1,18 +1,15 @@
 /**
- * API client with JWT auth interceptor.
- * All requests go to the NestJS backend at /api.
+ * API client for the Takatak MEV backend (JWT in localStorage).
+ * The backend works in integer cents and Revenu Québec codes; this file adapts them for the dashboard pages.
  */
 
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: typeof window !== 'undefined'
-    ? '/api'
-    : (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001') + '/api',
+  baseURL: typeof window !== 'undefined' ? '/api' : (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001') + '/api',
   timeout: 15000,
 });
 
-// Attach JWT token from localStorage
 api.interceptors.request.use((config) => {
   if (typeof window !== 'undefined') {
     const token = localStorage.getItem('takatak_token');
@@ -21,7 +18,6 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Redirect to login on 401
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -34,39 +30,83 @@ api.interceptors.response.use(
   },
 );
 
+/** Old dashboard payment names → Revenu Québec modPai codes. */
+const PAYMENT: Record<string, string> = { CASH: 'ARG', CREDIT_CARD: 'CRE', DEBIT_CARD: 'DEB', CHEQUE: 'CHQ', GIFT_CARD: 'CPR', MIXED: 'MIX', OTHER: 'AUT' };
+
+/** Adds the dollar fields the pages display (the backend stores cents). */
+export function withDollars(tx: any) {
+  if (!tx) return tx;
+  return {
+    ...tx,
+    subtotal: tx.subtotalCents / 100,
+    tpsAmount: tx.tpsCents / 100,
+    tvqAmount: tx.tvqCents / 100,
+    totalAmount: tx.totalCents / 100,
+    tipsAmount: tx.tipCents ? tx.tipCents / 100 : null,
+    mevSubmissionStatus: tx.mevStatus,
+  };
+}
+
 // Auth
-export const login = (username: string, password: string) =>
-  api.post('/auth/login', { username, password });
+export const login = (username: string, password: string) => api.post('/auth/login', { username, password });
 
 // Operator
 export const getMe = () => api.get('/operators/me');
 export const getMevStatus = () => api.get('/operators/mev-status');
 
 // Transactions
-export const createTransaction = (data: any) => api.post('/transactions', data);
-export const cancelTransaction = (id: string, reason?: string) =>
-  api.post(`/transactions/${id}/cancel`, { reason });
+export const listTransactions = async () => {
+  const r = await api.get('/transactions');
+  return { ...r, data: (r.data ?? []).map(withDollars) };
+};
+export const createTransaction = (data: any) =>
+  api.post('/transactions', {
+    deviceId: data.deviceId,
+    items: (data.items ?? []).map((i: any) => ({
+      description: i.description,
+      quantity: String(i.quantity ?? 1),
+      unitPriceCents: Math.round(Number(i.unitPrice ?? 0) * 100),
+      tax: i.taxCode || 'NON',
+    })),
+    paymentMode: PAYMENT[data.paymentMode] ?? data.paymentMode,
+    serviceType: data.tableNumber ? 'TBL' : 'CMP',
+    tableNumber: data.tableNumber,
+    numberOfCovers: data.numberOfCovers,
+    tipCents: data.tipsAmount ? Math.round(Number(data.tipsAmount) * 100) : undefined,
+  });
+export const cancelTransaction = (id: string, reason?: string) => api.post(`/transactions/${id}/cancel`, { reason });
+export const getTransaction = async (id: string) => {
+  const r = await api.get(`/transactions/${id}`);
+  return { ...r, data: withDollars(r.data) };
+};
 export const getReceipt = (id: string) => api.get(`/transactions/${id}/receipt`);
-export const getDailySummary = (deviceId: string, date?: string) =>
-  api.get('/transactions/daily-summary', { params: { deviceId, date } });
+export const reprint = (id: string, mode: 'RPR' | 'DUP') => api.post(`/transactions/${id}/reprint`, { mode });
+export const getDailySummary = (date?: string) => api.get('/transactions/daily-summary', { params: { date } });
 
-// Devices
+// Devices (created by `npm run seed:operator`, never from the dashboard)
 export const listDevices = () => api.get('/devices');
-export const registerDevice = (data: any) => api.post('/devices', data);
 export const getDeviceOfflineStatus = (id: string) => api.get(`/devices/${id}/offline-status`);
 export const flushDeviceQueue = (id: string) => api.post(`/devices/${id}/flush-queue`);
 
-// Certificates
-export const getActiveCert = () => api.get('/certificates/active');
-export const requestCertificate = (deviceId: string) => api.post('/certificates/request', { deviceId });
+// Certificates (CRT + UTL per device)
+export const listCertificates = () => api.get('/certificates');
+export const getActiveCert = async () => {
+  const r = await api.get('/certificates');
+  const active = (r.data ?? []).find((c: any) => c.type === 'SEV' && c.isActive) ?? null;
+  return { ...r, data: active ? { ...active, certificateType: active.type, validTo: active.validUntil } : null };
+};
+export const requestCertificate = async (deviceId?: string) => {
+  const id = deviceId ?? (await api.get('/devices')).data?.[0]?.id;
+  if (!id) throw new Error('Aucun appareil');
+  return api.post(`/devices/${id}/certificate`, {});
+};
 export const getExpiringCerts = () => api.get('/certificates/expiring');
 
-// Reports
+// Reports (DOC RUT, transmitted every time it is displayed)
 export const listReports = () => api.get('/reports');
-export const generateAnnualReport = (year: number) => api.post('/reports/annual', { year });
+export const generateAnnualReport = (year: number) => api.post('/reports/user-report', { year });
 
-// MEV Simulator (dev only)
+// Local simulator (SIMULATOR / DEV only)
 export const getSimulatorHealth = () => api.get('/mev-simulator/health');
-export const getTestCases = () => api.get('/mev-simulator/test-cases');
 
 export default api;

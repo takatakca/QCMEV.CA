@@ -1,30 +1,27 @@
-version: '3.9'
+# Takatak MEV — local / Coolify stack. NO secret in this file: copy .env.example to .env (outside git)
+# and fill it. The backend refuses to start when JWT_SECRET or PRIVATE_KEY_ENCRYPTION_KEY is missing or weak.
+#
+# The Food Hub integration API has no public port: Food Hub reaches it on the internal network
+# (e.g. http://qcmev-backend:3001). Only the dashboard is published.
 
 services:
-  # ─────────────────────────────────────────────────────────────
-  # PostgreSQL database
-  # ─────────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: takatak
-      POSTGRES_PASSWORD: takatak_dev_password
-      POSTGRES_DB: qcmev
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-qcmev}
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=C
     volumes:
       - postgres-data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U takatak -d qcmev"]
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # ─────────────────────────────────────────────────────────────
-  # NestJS backend
-  # ─────────────────────────────────────────────────────────────
-  backend:
+  qcmev-backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -32,41 +29,25 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    env_file: .env # cp backend/.env.example .env (repo root, never committed)
     environment:
-      DATABASE_URL: postgresql://takatak:takatak_dev_password@postgres:5432/qcmev
-      JWT_SECRET: CHANGE-THIS-IN-PRODUCTION-USE-A-LONG-RANDOM-STRING
-      PRIVATE_KEY_ENCRYPTION_KEY: CHANGE-THIS-32-CHAR-KEY-IN-PROD!!
-      FRONTEND_URL: http://localhost:3000
-      NODE_ENV: development
-      # Set to SIMULATOR to use the built-in simulator instead of real MEV-WEB
-      MEV_ENVIRONMENT: SIMULATOR
-    ports:
-      - "3001:3001"
-    volumes:
-      - ./backend:/app
-      - /app/node_modules
-    command: >
-      sh -c "npx prisma migrate deploy && npm run start:dev"
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-qcmev}
+      PORT: '3001'
+      MEV_ENVIRONMENT: ${MEV_ENVIRONMENT:-SIMULATOR}
+    expose:
+      - '3001'
 
-  # ─────────────────────────────────────────────────────────────
-  # Next.js frontend
-  # ─────────────────────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
-      - backend
+      - qcmev-backend
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:3001
-      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001}
     ports:
-      - "3000:3000"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-      - /app/.next
+      - '3000:3000'
 
 volumes:
   postgres-data:
