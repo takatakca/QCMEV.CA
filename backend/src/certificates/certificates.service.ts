@@ -7,9 +7,8 @@
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { AuditEventType, CertificateType, LogSeverity } from '@prisma/client';
 import * as crypto from 'crypto';
-import { civilTime } from '../common/time';
 import { certThumbprint } from '../crypto/ecdsa';
-import { csrBody, generateKeyAndCsr } from '../crypto/csr';
+import { addressUtcOf, csrBody, generateKeyAndCsr } from '../crypto/csr';
 import { KEY_VAULT, KeyVault } from '../crypto/key-vault';
 import { AuditLogService } from '../logging/audit-log.service';
 import { classifyErrors } from '../mev-web/mev-web.types';
@@ -85,7 +84,8 @@ export class CertificatesService {
     const op = device.operator;
     const nick = (nickname ?? `Certificat ${device.serialNumber}`).slice(0, 32).padEnd(8, '0');
     const { csrPem, privateKeyPem } = await generateKeyAndCsr({
-      utcOffset: civilTime().utc,
+      // The UTC of the business address (fixed), not today's daylight-saving offset.
+      utcOffset: addressUtcOf(op),
       nickname: nick,
       sector: op.sector,
       authorizationCode,

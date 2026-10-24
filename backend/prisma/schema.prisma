@@ -227,6 +227,9 @@ model Operator {
   city        String?
   province    String?        @default("QC")
   postalCode  String?
+  /// UTC associated with the business address, written in the CSR (L=). Fixed, not daylight-saving: "-05:00", or
+  /// "-04:00" for Îles-de-la-Madeleine and Basse-Côte-Nord (PROVEN: « Configuration du système d'enregistrement des ventes »).
+  addressUtc  String         @default("-05:00")
   /// Business contact from the registration form. Never sent to MEV-WEB.
   phone       String?
   email       String?
@@ -461,6 +464,13 @@ model UserReport {
   totalTvqCents     Int
   totalTransactions Int
   previousYearJson  Json?
+  /// Device the report was requested on, and the active user (« Production du rapport de l'utilisateur »).
+  deviceId          String?
+  userId            String?
+  /// The two sales summaries exactly as transmitted (current and previous year). Never displayed.
+  summaryJson       Json?
+  /// The report as displayed / printed (lines, QR content).
+  displayJson       Json?
   mevReportNumber   String?
   mevStatus         MevStatus  @default(PENDING)
   submittedAt       DateTime?

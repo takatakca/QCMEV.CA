@@ -12,7 +12,9 @@
  *   SW77-05 "correction" → « Facture corrigée » on a credited receipt SW77-11 DOC → user report (RUT), not a Z-report
  *   SW77-06 training → modTrans FOR                                   SW77-12 offline batch (transLot) + write-back
  * plus the core line's other behaviours: public registration, request DTOs, tenant isolation, REJECTED originals,
- * certificate renewal (CRT REM + nightly job), runtime check of stored transactions, official headers in the log.
+ * certificate renewal (CRT REM + nightly job), runtime check of stored transactions, official headers in the log;
+ * and the round-1 review rules: ASCII request text, the CSR's address UTC (L=-05:00), no invoice and no transmission
+ * with an expired certificate (the queue waits for the renewal), the user report's displayed contents and summary.
  *
  * Needs a migrated PostgreSQL (DATABASE_URL) and QCMEV_DB_TESTS=1; tools/local-run runs it on an embedded
  * PostgreSQL 16 (`npm run test:integration`). It boots the whole API in-process, on a free port, in SIMULATOR mode,
@@ -31,7 +33,9 @@ import { CertificateLifecycleService } from '../../src/certificates/certificate-
 import { canonicalJson } from '../../src/common/canonical-json';
 import { civilTime } from '../../src/common/time';
 import { loadConfig } from '../../src/config/app-config';
+import * as x509 from '@peculiar/x509';
 import { FIRST_PRECED, GENESIS_HASH, nextHashChain, transactionSignedString, verifyP256 } from '../../src/crypto/ecdsa';
+import { KEY_VAULT, KeyVault } from '../../src/crypto/key-vault';
 import { PrismaService } from '../../src/prisma/prisma.service';
 
 const RUN = process.env.QCMEV_DB_TESTS === '1' && !!process.env.DATABASE_URL;
@@ -172,6 +176,9 @@ suite('SW-77 preparation suite (database + local simulator; not Revenu Québec S
     const pub = new crypto.X509Certificate(sev.pemCertificate as string).publicKey;
     expect(pub.asymmetricKeyType).toBe('ec');
     expect(pub.asymmetricKeyDetails?.namedCurve).toBe('prime256v1');
+    // L= is the fixed UTC of the business address (-05:00 for Montréal), even while daylight saving is -04:00.
+    const csrPem = app.get<KeyVault>(KEY_VAULT).decrypt(sev.csrPem as string, `csr:${deviceA}`);
+    expect(new x509.Pkcs10CertificateRequest(csrPem).subjectName.getField('L')).toEqual(['-05:00']);
     expect((await api('PUT', `/devices/${deviceA}`, { fileNumber: 'ER9999' })).status).toBe(409); // frozen once certified
   }));
 
@@ -226,10 +233,34 @@ suite('SW-77 preparation suite (database + local simulator; not Revenu Québec S
     expect(t.totalCents).toBe(t.subtotalCents + t.tpsCents + t.tvqCents);
   }));
 
-  it('SW77-11 DOC: the user report (RUT) is transmitted when displayed', track('SW77-11')(async () => {
-    const r = await ok('POST', '/reports/user-report', { year: Number(civilTime().civilDate.slice(0, 4)) });
-    expect(r.mevStatus).toBe('ACCEPTED');
+  it('SW77-11 DOC: the user report (RUT) is displayed with the listed contents and its full summary is transmitted', track('SW77-11')(async () => {
+    const r = await ok('POST', '/reports/user-report', { year: Number(civilTime().civilDate.slice(0, 4)), deviceId: deviceA });
+    expect(r).toMatchObject({ mevStatus: 'ACCEPTED', transmitted: true });
     expect(r.mevReportNumber).toMatch(/^SIMDOC/);
+    const text = (r.display.lines as string[]).join('\n').replace(/\n {2}/g, ' ');
+    const device = await prisma.device.findUniqueOrThrow({ where: { id: deviceA } });
+    const last = await prisma.transaction.findFirstOrThrow({ where: { deviceId: deviceA }, orderBy: { deviceSeq: 'desc' } });
+    for (const s of ["RAPPORT DE L'UTILISATEUR", 'Restaurant SW-77 (données fictives)', `No TPS : ${PLACEHOLDER.noTPS}`, `No TVQ : ${PLACEHOLDER.noTVQ}`, 'Utilisateur : Admin Essai', `No de transaction : ${last.noTrans}`, "Identifiant de l'appareil : " + device.mevDeviceId, 'Identifiant du SEV', 'Version du SEV', 'Connexion au compte : ', 'Rapport produit le : ', '[CODE QR]']) {
+      expect(text).toContain(s);
+    }
+    expect(text).not.toMatch(/avantTax|apresTax|Sommaire/); // the sales summary is transmitted, never displayed
+    expect(r.display.qr.pngDataUrl).toMatch(/^data:image\/png;base64,/);
+    expect(r.summary).toBeUndefined();
+    const doc = await prisma.mevRequestLog.findFirstOrThrow({ where: { operatorId: operatorA, requestType: 'DOC' }, orderBy: { createdAt: 'desc' } });
+    const sv = (doc.requestPayload as any).body.reqDoc.sommVentes;
+    // (the log is JSONB, which reorders keys: compare the set)
+    expect(Object.keys(sv).sort()).toEqual(['nbTrans', 'nbTransPai', 'avantTax', 'TPS', 'TVQ', 'apresTax', 'ajus', 'mtdu'].sort());
+    expect(sv.nbTrans).toBeGreaterThanOrEqual(sv.nbTransPai);
+    expect(sv.mtdu).toBe(sv.apresTax); // no adjustment recorded
+  }));
+
+  it('ASCII: a sale with accented items and an accented user name reaches the simulator as ASCII text', track('ASCII')(async () => {
+    const t = await sale(deviceA, [item('Poutine régulière', 1299), item('Crème brûlée', 650)]);
+    expect(t.mevStatus).toBe('ACCEPTED');
+    expect(t.items.map((i: any) => i.description)).toEqual(['Poutine régulière', 'Crème brûlée']);
+    // The simulator refuses any request that is not ASCII text (SIM-ASCII), so the acceptance above proves it.
+    const log = await prisma.mevRequestLog.findFirstOrThrow({ where: { operatorId: operatorA, requestType: 'TRX', success: true }, orderBy: { createdAt: 'desc' } });
+    expect((log.requestPayload as any).body.reqTrans.transActu.items[0].descr).toBe('Poutine régulière');
   }));
 
   it('SW77-12 offline: signed locally and queued, credit note of a queued sale queued behind it, batch, write-back, back online', track('SW77-12')(async () => {
@@ -359,6 +390,39 @@ suite('SW-77 preparation suite (database + local simulator; not Revenu Québec S
     await prisma.certificate.updateMany({ where: { deviceId: broken.id }, data: { isActive: false } });
     await prisma.device.update({ where: { id: broken.id }, data: { isActive: false } });
     expect(await sale(deviceA, [item('Après le job', 800)])).toMatchObject({ mevStatus: 'ACCEPTED' });
+  }));
+
+  it('expired certificate: no invoice (423 certReady), nothing transmitted, the queue waits for the renewal', track('EXPIRED')(async () => {
+    await ok('POST', '/mev-simulator/_control', { mevDown: true }, '');
+    let queued: any;
+    try {
+      queued = await sale(deviceA, [item('Avant expiration', 700)]);
+      expect(queued.mevStatus).toBe('OFFLINE_PENDING');
+    } finally {
+      await ok('POST', '/mev-simulator/_control', { mevDown: false }, '');
+    }
+    const cert = await prisma.certificate.findFirstOrThrow({ where: { deviceId: deviceA, type: 'SEV', isActive: true } });
+    await prisma.certificate.update({ where: { id: cert.id }, data: { validUntil: new Date(Date.now() - 60_000) } });
+    try {
+      const sentBefore = await prisma.mevRequestLog.count({ where: { operatorId: operatorA, requestType: { in: ['TRX', 'DOC'] } } });
+      const txBefore = await prisma.transaction.count({ where: { deviceId: deviceA } });
+      const refused = await api('POST', '/transactions', { deviceId: deviceA, items: [item('Après expiration', 500)], paymentMode: 'ARG', serviceType: 'CMP' });
+      expect(refused.status).toBe(423);
+      expect(refused.body).toMatchObject({ error: 'location_not_ready', field: 'certReady' });
+      expect(await prisma.transaction.count({ where: { deviceId: deviceA } })).toBe(txBefore); // nothing signed or stored
+      expect((await api('POST', `/transactions/${queued.id}/reprint`, { mode: 'RPR' })).status).toBe(423); // a reprint is an invoice too
+      const held = await ok('POST', `/devices/${deviceA}/flush-queue`, {});
+      expect(held).toMatchObject({ sent: 0, pendingCount: 1 });
+      const rep = await ok('POST', '/reports/user-report', { year: Number(civilTime().civilDate.slice(0, 4)), deviceId: deviceA });
+      expect(rep).toMatchObject({ transmitted: false, notTransmittedReason: 'certificateExpired' });
+      expect(rep.display.lines.length).toBeGreaterThan(10); // still displayed
+      expect(await prisma.mevRequestLog.count({ where: { operatorId: operatorA, requestType: { in: ['TRX', 'DOC'] } } })).toBe(sentBefore);
+    } finally {
+      await prisma.certificate.update({ where: { id: cert.id }, data: { validUntil: cert.validUntil } });
+    }
+    const flush = await ok('POST', `/devices/${deviceA}/flush-queue`, {});
+    expect(flush).toMatchObject({ accepted: 1, pendingCount: 0, offlineMode: false });
+    expect((await ok('GET', `/transactions/${queued.id}`)).mevStatus).toBe('ACCEPTED');
   }));
 
   it('a stored transaction that fails the runtime check is never sent: REJECTED, queue FAILED, CRITICAL audit', track('PAYLOAD')(async () => {

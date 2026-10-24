@@ -42,7 +42,11 @@ Tests use obvious placeholders (`XXXX-XXXX`, `ER0000`, `0000000000TQ0001`).
   (`refs`: `noTrans`, `datTrans`, `avantTax`) is the original's own, fixed when it was signed: an original still in the
   offline queue can be credited (the credit note is queued behind it); an original REJECTED by MEV-WEB cannot be
   referenced (400). « Facture corrigée »: `POST /transactions` with the `relatedTransactionId` of a credited receipt.
-* **DOC RUT** — the user report is transmitted every time it is displayed.
+* **DOC RUT** — the user report is displayed for the logged-in user with the contents Revenu Québec lists (business, user,
+  address, last document of the device, device / SEV ids and version, login and production times, QR), and its sales
+  summary (never displayed) is transmitted every time it is produced.
+* **ASCII requests** — every MEV-WEB request is ASCII text (SW-76 §4.2): accents travel as JSON `\uXXXX` escapes.
+* **Expired certificate** — no invoice and no transmission until it is renewed (423 `certReady`); the queue waits.
 * **Receipts** — exact 80 mm text (42 columns), HTML fragment, QR code (SVG + PNG), Revenu Québec's public mentions
   (« PAIEMENT REÇU », « NOTE DE CRÉDIT », « REPRODUCTION », « ***COPIE DU COMMERÇANT*** », « NE PAS REMETTRE AU CLIENT »,
   « ***DOCUMENT DE FORMATION*** », « COMMANDE PAR UNE PLATEFORME NUMÉRIQUE », « Copie électronique ») and `renderHash`.

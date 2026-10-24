@@ -4,8 +4,14 @@
  *
  * - Every request and answer is written to MevRequestLog after redaction (no authorization code, tax numbers,
  *   CSR, certificate or key ever reaches the log).
- * - A network failure, a timeout or a 5xx raises MevUnreachableError: the caller switches to offline mode.
- *   It is never stored as a rejection.
+ * - The request body is ASCII text (SW-76 §4.2): accents are sent as JSON \uXXXX escapes (common/ascii-json.ts), and
+ *   SIGNATRANSM signs exactly those bytes.
+ * - A network failure, a timeout, a 5xx, a 408 / 429 ("try again later") or a 2xx that is not a MEV-WEB answer (no
+ *   retour* envelope, e.g. a proxy page) raises MevUnreachableError: the caller switches to offline mode. It is never
+ *   stored as a rejection, and never as an acceptance.
+ * - Any other 4xx is a rejection (core-line rule, HANDOFF task 1): when its body carries no listErr (a gateway 401 /
+ *   403, a 404 from a wrong MEV_PATH_*, an HTML error page), an error {codRetour "HTTP"} is put in the answer, so the
+ *   transaction is REJECTED (queue FAILED, audit) and a user is never marked registered. It is never "accepted".
  */
 import { HttpService } from '@nestjs/axios';
 import { Inject, Injectable, Logger } from '@nestjs/common';
@@ -13,10 +19,12 @@ import { MevRequestType, Prisma } from '@prisma/client';
 import type { KeyObject } from 'crypto';
 import { firstValueFrom } from 'rxjs';
 import { APP_CONFIG, AppConfig } from '../config/app-config';
+import { toAsciiJson } from '../common/ascii-json';
 import { redact, safeErrorMessage } from '../common/redact';
 import { signP256 } from '../crypto/ecdsa';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  MevError,
   MevHeaders,
   MevRequestKind,
   Modif,
@@ -38,6 +46,24 @@ export class MevUnreachableError extends Error {
     this.name = 'MevUnreachableError';
   }
 }
+
+/** The answer envelope of each request kind (S1 names). */
+export const ANSWER_ENVELOPE: Record<MevRequestKind, 'retourCertif' | 'retourUtil' | 'retourTrans' | 'retourDoc'> = {
+  CRT: 'retourCertif',
+  UTL: 'retourUtil',
+  TRX: 'retourTrans',
+  DOC: 'retourDoc',
+};
+
+/** 4xx statuses that mean "try again later" (request timeout, too many requests): unreachable, never a rejection. */
+export const TRANSIENT_4XX: ReadonlySet<number> = new Set([408, 429]);
+
+/** The error put in a 4xx answer that has no listErr of its own. "HTTP" does not end in 0, 1 or 5: a rejection. */
+export function httpRejection(status: number): MevError {
+  return { id: `HTTP-${status}`, mess: `MEV-WEB answered HTTP ${status} without an error list`, codRetour: 'HTTP' };
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
 export interface SigningMaterial {
   privateKey: KeyObject;
@@ -127,7 +153,8 @@ export class MevWebService {
   }
 
   private async post<T>(kind: MevRequestKind, operatorId: string, headers: MevHeaders, body: unknown, signer?: SigningMaterial): Promise<{ status: number; data: T }> {
-    const raw = JSON.stringify(body);
+    // SW-76 §4.2: ASCII text only. SIGNATRANSM covers exactly the bytes sent.
+    const raw = toAsciiJson(body);
     const allHeaders: Record<string, string> = { 'Content-Type': 'application/json', ...(headers as unknown as Record<string, string>) };
     if (signer) allHeaders.SIGNATRANSM = signP256(signer.privateKey, raw);
     const url = `${this.cfg.mevBaseUrl}${this.cfg.mevPaths[kind]}`;
@@ -140,40 +167,60 @@ export class MevWebService {
         requestPayload: redact({ headers: allHeaders, body }) as Prisma.InputJsonValue,
       },
     });
+    const unreachable = async (status: number | undefined, code: string, why: string): Promise<never> => {
+      this.lastFailAt = new Date();
+      await this.prisma.mevRequestLog.update({
+        where: { id: log.id },
+        data: { httpStatus: status ?? null, mevErrorCode: code, duration: Date.now() - started, success: false },
+      });
+      this.logger.warn(`${kind} unreachable: ${why}`);
+      throw new MevUnreachableError(`MEV-WEB unreachable (${status ?? 'network'})`, status);
+    };
+
+    let res: { status: number; data: T };
     try {
-      const res = await firstValueFrom(
+      res = await firstValueFrom(
         this.http.post<T>(url, raw, {
           headers: allHeaders,
           timeout: this.cfg.mevTimeoutMs,
-          // 4xx answers carry MEV error lists; only 5xx and network errors mean "unreachable".
+          // 4xx answers are read below (rejections, or "try again later"); 5xx and network errors mean "unreachable".
           validateStatus: (s) => s < 500,
           transformRequest: [(d) => d],
         }),
       );
-      this.lastOkAt = new Date();
-      const listErr = this.firstErrorCode(res.data);
-      await this.prisma.mevRequestLog.update({
-        where: { id: log.id },
-        data: {
-          responsePayload: redact(res.data ?? null) as Prisma.InputJsonValue,
-          httpStatus: res.status,
-          mevErrorCode: listErr,
-          duration: Date.now() - started,
-          success: res.status < 400 && !listErr,
-        },
-      });
-      this.logger.log(`${kind} -> HTTP ${res.status}${listErr ? ` codRetour ${listErr}` : ''} (${Date.now() - started} ms)`);
-      return { status: res.status, data: res.data };
     } catch (err) {
-      this.lastFailAt = new Date();
-      const status = (err as { response?: { status?: number } })?.response?.status;
-      await this.prisma.mevRequestLog.update({
-        where: { id: log.id },
-        data: { httpStatus: status ?? null, mevErrorCode: 'UNREACHABLE', duration: Date.now() - started, success: false },
-      });
-      this.logger.warn(`${kind} unreachable: ${safeErrorMessage(err)}`);
-      throw new MevUnreachableError(`MEV-WEB unreachable (${status ?? 'network'})`, status);
+      return unreachable((err as { response?: { status?: number } })?.response?.status, 'UNREACHABLE', safeErrorMessage(err));
     }
+
+    const envelope = ANSWER_ENVELOPE[kind];
+    const answer: unknown = res.data;
+    const hasEnvelope = isObject(answer) && isObject(answer[envelope]);
+    if (TRANSIENT_4XX.has(res.status)) return unreachable(res.status, 'UNREACHABLE', `HTTP ${res.status} (try again later)`);
+    // A 2xx without the answer envelope did not come from MEV-WEB's service (proxy, captive portal, wrong host):
+    // nothing was recorded, so nothing is accepted; the transactions stay queued and are sent again.
+    if (res.status < 400 && !hasEnvelope) return unreachable(res.status, 'NOT_MEV_ANSWER', `HTTP ${res.status} without ${envelope}`);
+
+    this.lastOkAt = new Date();
+    let data = answer as T;
+    let listErr = this.firstErrorCode(answer);
+    if (res.status >= 400 && !listErr) {
+      // Core-line rule: a 4xx is a rejection. Without a listErr of its own it would otherwise read as "accepted".
+      const inner = hasEnvelope ? (answer as Record<string, Record<string, unknown>>)[envelope] : {};
+      data = { ...(isObject(answer) ? answer : {}), [envelope]: { ...inner, listErr: [httpRejection(res.status)] } } as T;
+      listErr = 'HTTP';
+    }
+    await this.prisma.mevRequestLog.update({
+      where: { id: log.id },
+      data: {
+        responsePayload: redact(isObject(answer) ? answer : { nonJsonBody: true }) as Prisma.InputJsonValue,
+        httpStatus: res.status,
+        mevErrorCode: listErr,
+        duration: Date.now() - started,
+        success: res.status < 400 && !listErr,
+      },
+    });
+    this.logger.log(`${kind} -> HTTP ${res.status}${listErr ? ` codRetour ${listErr}` : ''} (${Date.now() - started} ms)`);
+    return { status: res.status, data };
   }
 
   private firstErrorCode(data: unknown): string | null {

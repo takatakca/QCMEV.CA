@@ -101,6 +101,23 @@ export interface ReqTrans {
   reqTrans: { transActu?: TransActu; transLot?: TransActu[] };
 }
 
+/**
+ * Sales summary of the user report. The CONTENT is PROVEN (« Production du rapport de l'utilisateur »: the year, the
+ * total number of transactions, the number of payment transactions, the amount before taxes, the TPS and TVQ, the
+ * amount after taxes, the adjusted amount, the total amount due); every field NAME is SPEC (SW-73.D): avantTax / TPS /
+ * TVQ / apresTax / ajus / mtdu reuse the transaction's names (S1), nbTrans / nbTransPai are QCMEV placeholders.
+ */
+export interface SommVentes {
+  nbTrans: number;
+  nbTransPai: number;
+  avantTax: string;
+  TPS: string;
+  TVQ: string;
+  apresTax: string;
+  ajus: string;
+  mtdu: string;
+}
+
 export interface ReqDoc {
   reqDoc: {
     typDoc: 'RUT';
@@ -109,8 +126,8 @@ export interface ReqDoc {
     noTVQ: string;
     annee: number;
     datDoc: string;
-    sommVentes: { avantTax: string; TPS: string; TVQ: string; apresTax: string; nbTrans: number };
-    sommVentesAnt?: { avantTax: string; TPS: string; TVQ: string; apresTax: string; nbTrans: number };
+    sommVentes: SommVentes;
+    sommVentesAnt?: SommVentes;
   };
 }
 
@@ -148,7 +165,9 @@ export type MevOutcome = 'accepted' | 'retry_batch' | 'rejected';
 
 /**
  * Error classes (design R7, PROVEN): a codRetour ending in 0, 1 or 5 means "not sent": resend it in a batch with
- * the next transaction. Any other code is a rejection that needs a human.
+ * the next transaction. Any other code is a rejection that needs a human, including the "HTTP" error QCMEV puts in a
+ * 4xx answer that carries no listErr (mev-web.service.ts). An empty list is "accepted" only because MevWebService never
+ * hands over a 4xx without errors, nor a 2xx that is not a MEV-WEB answer.
  */
 export function classifyErrors(errors: MevError[] | undefined): MevOutcome {
   if (!errors || errors.length === 0) return 'accepted';

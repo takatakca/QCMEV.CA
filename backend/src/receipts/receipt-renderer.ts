@@ -42,7 +42,8 @@ export const MENTION = {
   ELECTRONIC: 'Copie électronique',
   NOT_PAID: 'PAIEMENT NON REÇU',
   COMMUNICATION_PROBLEM: 'PROBLÈME DE COMMUNICATION',
-  INVALID_CERT: '*** CERTIFICAT INVALIDE ***', // SPEC
+  /** SPEC wording. Never on a new invoice: with an expired certificate no invoice is produced (TransactionsService.issue). */
+  INVALID_CERT: '*** CERTIFICAT INVALIDE ***',
   ESTIMATE: 'ESTIMATION DES RENSEIGNEMENTS',
   QUOTE: 'SOUMISSION',
 } as const;
@@ -147,19 +148,19 @@ export function receiptMentions(r: ReceiptInput, electronic = r.formImpr === 'EL
   return [...new Set(m)];
 }
 
-function center(s: string): string {
+export function center(s: string): string {
   if (s.length >= RECEIPT_WIDTH) return s.slice(0, RECEIPT_WIDTH);
   const pad = Math.floor((RECEIPT_WIDTH - s.length) / 2);
   return `${' '.repeat(pad)}${s}`;
 }
 
-function leftRight(left: string, right: string): string {
+export function leftRight(left: string, right: string): string {
   const room = RECEIPT_WIDTH - right.length - 1;
   const l = left.length > room ? left.slice(0, room) : left;
   return `${l}${' '.repeat(RECEIPT_WIDTH - l.length - right.length)}${right}`;
 }
 
-function wrap(s: string, indent = ''): string[] {
+export function wrap(s: string, indent = ''): string[] {
   const out: string[] = [];
   let rest = s;
   while (rest.length > RECEIPT_WIDTH) {
@@ -230,7 +231,7 @@ export function renderText(r: ReceiptInput, mentions: string[], electronic = fal
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-function htmlOf(lines: string[], svg: string, link: string | null): string {
+export function htmlOf(lines: string[], svg: string, link: string | null): string {
   const at = lines.indexOf(QR_LINE);
   const before = (at >= 0 ? lines.slice(0, at) : lines).map(esc).join('\n');
   let rest = at >= 0 ? lines.slice(at + 1) : [];

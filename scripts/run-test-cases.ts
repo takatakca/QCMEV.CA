@@ -201,8 +201,13 @@ async function main() {
   await run('TC-012', 'User report (DOC RUT) transmitted when displayed', async () => {
     const year = new Date().getFullYear();
     const r = await api('POST', '/reports/user-report', { year });
-    assert(r.mevStatus === 'ACCEPTED' && r.mevReportNumber, `report ${r.mevStatus}`);
+    assert(r.mevStatus === 'ACCEPTED' && r.mevReportNumber && r.transmitted === true, `report ${r.mevStatus}`);
     assert(r.totalTransactions > 0, 'the report counts this year\'s receipts');
+    const shown = ((r.display?.lines ?? []) as string[]).join('\n');
+    for (const s of ["RAPPORT DE L'UTILISATEUR", 'No TPS', 'No TVQ', 'Utilisateur', 'Dernier document produit', "Identifiant de l'appareil", 'Identifiant du SEV', 'Version du SEV', 'Connexion au compte', 'Rapport produit le', '[CODE QR]']) {
+      assert(shown.includes(s), `the displayed report shows « ${s} »`);
+    }
+    assert(!/avantTax|apresTax/.test(shown), 'the sales summary is transmitted, never displayed');
   });
 
   // Chain check across everything signed above (single device): each preced = the previous signature.

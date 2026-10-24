@@ -146,7 +146,7 @@ of that SEV: it never signs, never talks to Revenu Québec, and prints **only** 
 | 404 | `{error: "sale_not_found"}` | the sale is not issued yet: retry the credit / print later |
 | 409 | `{error: "idempotency_conflict" \| "replay_conflict"}` | use the credit-note path |
 | 422 | `{error: "validation_failed", errors[{field, message}]}` | no retry, needs a human |
-| 423 | `{error: "location_not_ready", field: "locationId" \| "deviceReady" \| "certReady" \| "usersReady"}` | slow retry + alert |
+| 423 | `{error: "location_not_ready", field: "locationId" \| "deviceReady" \| "certReady" \| "usersReady"}` | slow retry + alert. `certReady` also means the device's SEV certificate has **expired**: Revenu Québec forbids producing an invoice with it, so nothing is issued until it is renewed (`/health` shows `certReady: false` and `certificateValidUntil`) |
 | 429 / 5xx / timeout | | retry with the same key |
 
 WEB-SRM error classes: a `codRetour` ending in 0, 1 or 5 means "not recorded": QCMEV resends it with the next batch

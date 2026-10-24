@@ -1,6 +1,12 @@
 /**
- * Civil date and time in America/Montreal (PROVEN: datTrans AAAAMMJJhhmmss in local time, plus the utc offset).
- * A sale at 23:30 local time belongs to that local day even though it is already the next day in UTC.
+ * Civil date and time in America/Montreal (datTrans AAAAMMJJhhmmss in local wall-clock time). A sale at 23:30 local
+ * time belongs to that local day even though it is already the next day in UTC.
+ *
+ * `utc` here is the offset in force at that moment (-04:00 in summer, -05:00 in winter), so datTrans + utc is the
+ * exact instant. It is sent as the transaction's `utc` field: the meaning of that field is SPEC (SPEC_GAPS #30; S1
+ * name, not described in any public page). It is NOT the certificate's L= value: Revenu Québec defines that one as
+ * the fixed UTC of the business address, -05:00 (or -04:00 for Îles-de-la-Madeleine and Basse-Côte-Nord), see
+ * crypto/csr.ts addressUtcOf().
  */
 
 export const TIME_ZONE = 'America/Montreal';
@@ -10,7 +16,7 @@ export interface CivilTime {
   civilDate: string;
   /** AAAAMMJJhhmmss */
   datTrans: string;
-  /** -04:00 (EDT) or -05:00 (EST) */
+  /** -04:00 (EDT) or -05:00 (EST): the offset in force at that moment (SPEC as the transaction's utc field). */
   utc: string;
   /** ISO-8601 with offset, e.g. 2026-10-24T23:30:00-04:00 */
   iso: string;

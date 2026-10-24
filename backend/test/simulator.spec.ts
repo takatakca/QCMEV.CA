@@ -31,7 +31,7 @@ describe('local simulator: CRT with a throwaway CA, UTL, TRX with signature and 
   const signedHeaders = (raw: string) => ({ ...headers, idapprl: idApprl, signatransm: signP256(key, raw), emprcertiftransm: certThumbprint(certPem) });
 
   it('CRT: verifies the ECDSA CSR and returns an X.509 certificate for our key', async () => {
-    const { csrPem, privateKeyPem } = await generateKeyAndCsr({ utcOffset: '-04:00', nickname: 'Certificat E2E-A', sector: 'RBC', authorizationCode: 'XXXX-XXXX', noTVQ: ident.noTVQ, neq: '0000000000', fileNumber: 'ER0000' });
+    const { csrPem, privateKeyPem } = await generateKeyAndCsr({ utcOffset: '-05:00', nickname: 'Certificat E2E-A', sector: 'RBC', authorizationCode: 'XXXX-XXXX', noTVQ: ident.noTVQ, neq: '0000000000', fileNumber: 'ER0000' });
     key = crypto.createPrivateKey(privateKeyPem);
     const bad = await sim.enrolement({ ...headers, codautori: 'WRONG', notps: 'x', notvq: 'y' }, { reqCertif: { modif: 'AJO', csr: csrBody(csrPem) } });
     expect(bad.status).toBe(400);
@@ -82,7 +82,7 @@ describe('local simulator: CRT with a throwaway CA, UTL, TRX with signature and 
   });
 
   it('CRT REM (renewal): signed by the current certificate, same IDAPPRL, chain and users kept', async () => {
-    const { csrPem, privateKeyPem } = await generateKeyAndCsr({ utcOffset: '-04:00', nickname: 'Certificat E2E-A', sector: 'RBC', authorizationCode: 'XXXX-XXXX', noTVQ: ident.noTVQ, neq: '0000000000', fileNumber: 'ER0000' });
+    const { csrPem, privateKeyPem } = await generateKeyAndCsr({ utcOffset: '-05:00', nickname: 'Certificat E2E-A', sector: 'RBC', authorizationCode: 'XXXX-XXXX', noTVQ: ident.noTVQ, neq: '0000000000', fileNumber: 'ER0000' });
     const crt = (noSerie: string, signer = key) => {
       const body = { reqCertif: { modif: 'REM', csr: csrBody(csrPem), noSerie } };
       const raw = JSON.stringify(body);

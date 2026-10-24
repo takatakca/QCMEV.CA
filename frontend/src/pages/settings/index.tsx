@@ -3,7 +3,7 @@
  */
 import React, { useEffect, useState } from 'react';
 import Layout from '../../components/Layout';
-import { getMe, getActiveCert, requestCertificate, getExpiringCerts, listDevices } from '../../lib/api';
+import { getMe, getActiveCert, requestCertificate, getExpiringCerts, listDevices, updateMe } from '../../lib/api';
 
 export default function SettingsPage() {
   const [operator, setOperator]     = useState<any>(null);
@@ -13,6 +13,18 @@ export default function SettingsPage() {
   const [certLoading, setCertLoading] = useState(false);
   const [error, setError]           = useState('');
   const [certMsg, setCertMsg]       = useState('');
+
+  // UTC of the business address, written in the certificate request (L=): -05:00, or -04:00 for
+  // Îles-de-la-Madeleine and Basse-Côte-Nord (Revenu Québec, « Configuration du SEV »). Never a daylight-saving offset.
+  const saveAddressUtc = async (addressUtc: string) => {
+    setError('');
+    try {
+      const r = await updateMe({ addressUtc });
+      setOperator(r.data);
+    } catch (err: any) {
+      setError(err.response?.data?.message ?? "Erreur lors de l'enregistrement");
+    }
+  };
 
   useEffect(() => {
     Promise.all([getMe(), getActiveCert(), getExpiringCerts()])
@@ -79,6 +91,19 @@ export default function SettingsPage() {
 
               <dt className="text-gray-500">Secteur d'activité</dt>
               <dd>{operator.sector ?? '–'}</dd>
+
+              <dt className="text-gray-500">UTC de l'adresse (certificat)</dt>
+              <dd>
+                <select
+                  value={operator.addressUtc ?? '-05:00'}
+                  onChange={(e) => saveAddressUtc(e.target.value)}
+                  className="border border-gray-300 rounded px-2 py-1"
+                >
+                  <option value="-05:00">-05:00 (Québec)</option>
+                  <option value="-04:00">-04:00 (Îles-de-la-Madeleine, Basse-Côte-Nord)</option>
+                </select>
+                <p className="text-xs text-gray-400 mt-1">Utilisé par la prochaine demande de certificat.</p>
+              </dd>
 
               <dt className="text-gray-500">Environnement MEV</dt>
               <dd>

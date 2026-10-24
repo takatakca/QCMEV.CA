@@ -53,6 +53,8 @@ export const login = (username: string, password: string) => api.post('/auth/log
 // Operator
 export const getMe = () => api.get('/operators/me');
 export const getMevStatus = () => api.get('/operators/mev-status');
+/** Whitelisted operator settings (e.g. addressUtc: the UTC of the business address written in the next certificate request). */
+export const updateMe = (body: Record<string, string>) => api.put('/operators/me', body);
 
 // Transactions
 export const listTransactions = async () => {
@@ -109,9 +111,9 @@ export const getExpiringCerts = async () => {
 /** Renews every certified device now (CRT REM), like the nightly job. */
 export const renewCertificates = () => api.post('/certificates/renew', {});
 
-// Reports (DOC RUT, transmitted every time it is displayed)
+// User report (DOC RUT): displayed for the logged-in user, and its sales summary transmitted, every time it is produced
 export const listReports = () => api.get('/reports');
-export const generateAnnualReport = (year: number) => api.post('/reports/user-report', { year });
+export const produceUserReport = (year: number, deviceId?: string) => api.post('/reports/user-report', { year, ...(deviceId ? { deviceId } : {}) });
 
 // Local simulator (SIMULATOR / DEV only)
 export const getSimulatorHealth = () => api.get('/mev-simulator/health');

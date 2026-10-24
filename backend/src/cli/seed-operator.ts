@@ -6,7 +6,7 @@
  *
  * seed.json:
  * {
- *   "operator": { "name": "...", "neq": "...", "noTPS": "...", "noTVQ": "...", "address": "...", "city": "..." },
+ *   "operator": { "name": "...", "neq": "...", "noTPS": "...", "noTVQ": "...", "address": "...", "city": "...", "addressUtc": "-05:00" },
  *   "admin": { "username": "...", "password": "...(12+ chars)", "firstName": "...", "lastName": "..." },
  *   "staff": [{ "username": "...", "password": "...", "mevUserName": "...", "role": "CASHIER", "externalId": "foodhub:<staff id>" }],
  *   "devices": [{ "serialNumber": "...", "fileNumber": "...", "authorizationCode": "XXXX-XXXX", "foodhubLocationId": "..." }],
@@ -19,12 +19,14 @@ import { PrismaClient, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import * as fs from 'fs';
 import { MEV_ENVS, MevEnv, parseKeyEncryptionKey } from '../config/app-config';
+import { ADDRESS_UTC_VALUES } from '../crypto/csr';
 import { KeyVault } from '../crypto/key-vault';
 
 const FOODHUB_AUTO = 'FOODHUB-AUTO';
 
 interface SeedFile {
-  operator: { name: string; neq: string; noTPS: string; noTVQ: string; address?: string; city?: string; postalCode?: string };
+  /** addressUtc: UTC of the business address for the certificate request, "-05:00" (default) or "-04:00". */
+  operator: { name: string; neq: string; noTPS: string; noTVQ: string; address?: string; city?: string; postalCode?: string; addressUtc?: string };
   admin: { username: string; password: string; firstName?: string; lastName?: string; mevUserName?: string };
   staff?: Array<{ username: string; password: string; mevUserName?: string; role?: string; externalId?: string; firstName?: string; lastName?: string }>;
   devices: Array<{ serialNumber: string; fileNumber: string; authorizationCode: string; foodhubLocationId?: string; description?: string }>;
@@ -51,6 +53,7 @@ async function main(): Promise<void> {
   const vault = new KeyVault(parseKeyEncryptionKey(process.env.PRIVATE_KEY_ENCRYPTION_KEY ?? ''));
   const o = seed.operator;
   if (!o?.name || !o.neq || !o.noTPS || !o.noTVQ) fail('operator.name, neq, noTPS and noTVQ are required');
+  if (o.addressUtc !== undefined && !(ADDRESS_UTC_VALUES as readonly string[]).includes(o.addressUtc)) fail('operator.addressUtc must be -05:00, or -04:00 for Îles-de-la-Madeleine and Basse-Côte-Nord');
   if (!seed.admin?.username || (seed.admin.password ?? '').length < 12) fail('admin.username and a 12+ character admin.password are required');
   if (!seed.devices?.length) fail('at least one device is required');
   for (const d of seed.devices) {
@@ -61,8 +64,8 @@ async function main(): Promise<void> {
   try {
     const operator = await prisma.operator.upsert({
       where: { neq: o.neq },
-      update: { name: o.name, noTPS: o.noTPS, noTVQ: o.noTVQ, address: o.address, city: o.city, postalCode: o.postalCode, environment: env },
-      create: { name: o.name, neq: o.neq, noTPS: o.noTPS, noTVQ: o.noTVQ, address: o.address, city: o.city, postalCode: o.postalCode, environment: env },
+      update: { name: o.name, noTPS: o.noTPS, noTVQ: o.noTVQ, address: o.address, city: o.city, postalCode: o.postalCode, addressUtc: o.addressUtc, environment: env },
+      create: { name: o.name, neq: o.neq, noTPS: o.noTPS, noTVQ: o.noTVQ, address: o.address, city: o.city, postalCode: o.postalCode, addressUtc: o.addressUtc, environment: env },
     });
 
     const devices: Array<{ id: string; serialNumber: string; locationId?: string }> = [];

@@ -1,7 +1,8 @@
 /**
  * Issuance of every SEV transaction (staff sales, Food Hub sales, credit notes, reprints, post-invoice changes).
  *
- *   1. checks (operator, device, user registered with UTL, sale rules);
+ *   1. checks (operator, device, user registered with UTL, sale rules, a SEV certificate that has not expired: with an
+ *      expired one no invoice is produced and nothing is transmitted, 423 certReady);
  *   2. in ONE database transaction, with the device row locked: number (per device per civil day, America/Montreal),
  *      signature chain (signa.preced = previous signature, 88 "=" for the first one), ECDSA signature, internal
  *      SHA-256 audit chain, the Transaction row, an offline-queue entry, and the caller's own rows (idempotency);
@@ -121,7 +122,13 @@ export class TransactionsService {
       if (e instanceof DeviceNotReadyError) throw new LocationNotReadyError(e.field, e.message);
       throw e;
     }
-    if (material.expired) warnings.push('certificateInvalid');
+    // PROVEN (« Obtention et suppression d'un ou plusieurs certificats numériques », Expiration): with an expired
+    // certificate the SEV can neither transmit nor « produire et remettre de factures ». No invoice is signed until the
+    // certificate is replaced (CRT REM: POST /api/certificates/renew, or the nightly job before it expires).
+    if (material.expired) {
+      await this.audit.log({ operatorId, eventType: AuditEventType.MEV_ERROR, severity: LogSeverity.CRITICAL, userId, deviceId, description: 'invoice refused: the SEV certificate of this device has expired (renew it)', metadata: { validUntil: material.validUntil?.toISOString() ?? null } });
+      throw new LocationNotReadyError('certReady', 'the SEV certificate of this device has expired: no invoice can be produced until it is renewed (CRT REM)');
+    }
     // SW-76 §4.2.1: the QR link data is encrypted with MEV-WEB's certificate (returned by CRT). No certificate, no invoice.
     const mevWebCertPem = await this.certificates.mevWebCertificate(deviceId);
     if (!mevWebCertPem) throw new LocationNotReadyError('certReady', 'no MEV-WEB certificate to encrypt the QR code (run CRT again)');
@@ -142,7 +149,7 @@ export class TransactionsService {
           {
             noTrans,
             datTrans: now.datTrans,
-            utc: now.utc,
+            utc: now.utc, // offset in force at datTrans (SPEC_GAPS #30); not the certificate's address UTC
             datActu: now.datTrans,
             nomUtil: user.mevUserName as string,
             preced,
@@ -280,6 +287,8 @@ export class TransactionsService {
       sent += r.sent;
       accepted += r.accepted;
       if (r.offline) return { sent, accepted, offline: true };
+      // Expired certificate: nothing may be transmitted; the queue waits for the renewal (no sync, no lastSyncAt).
+      if (r.certificateExpired) return { sent, accepted, offline: false };
       // Stop when nothing was sent, or nothing moved (every item answered "not sent": next flush).
       if (!r.sent || !r.settled || r.halted) break;
     }
@@ -287,8 +296,12 @@ export class TransactionsService {
     return { sent, accepted, offline: false };
   }
 
-  /** One transActu / transLot. `settled` = transactions accepted or rejected (they leave the queue). */
-  private async submitBatch(deviceId: string): Promise<{ sent: number; accepted: number; settled: number; offline: boolean; halted: boolean }> {
+  /**
+   * One transActu / transLot. `settled` = transactions accepted or rejected (they leave the queue).
+   * `certificateExpired` = nothing was sent because the device certificate has expired (PROVEN: an expired certificate
+   * cannot transmit). The transactions signed before the expiry stay queued, untouched, and go out after the renewal.
+   */
+  private async submitBatch(deviceId: string): Promise<{ sent: number; accepted: number; settled: number; offline: boolean; halted: boolean; certificateExpired?: boolean }> {
     const entries = await this.prisma.offlineQueue.findMany({
       where: { deviceId, status: QueueStatus.PENDING, transactionId: { not: null } },
       include: { transaction: true },
@@ -325,6 +338,11 @@ export class TransactionsService {
     if (!pending.length) return { sent: 0, accepted: 0, settled: 1, offline: false, halted };
 
     const material = await this.certificates.signingMaterial(deviceId);
+    if (material.expired) {
+      this.logger.warn(`device ${device.serialNumber}: certificate expired, ${pending.length} queued transaction(s) wait for the renewal`);
+      await this.prisma.offlineQueue.updateMany({ where: { id: { in: pending.map((e) => e.id) } }, data: { errorMessage: 'certificate expired: waiting for the renewal (CRT REM)' } });
+      return { sent: 0, accepted: 0, settled: 0, offline: false, halted, certificateExpired: true };
+    }
     await this.prisma.offlineQueue.updateMany({ where: { id: { in: pending.map((e) => e.id) } }, data: { lastAttemptAt: now, attempts: { increment: 1 } } });
 
     let results;

@@ -7,6 +7,7 @@
  */
 import { IsEmail, IsIn, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 import { MEV_ENVS } from '../../config/app-config';
+import { ADDRESS_UTC_VALUES } from '../../crypto/csr';
 
 /** nomUtil sent with UTL (SPEC: allowed characters and length wait for SW-73). */
 export const NOM_UTIL = /^[A-Za-z0-9À-ÿ .'#_-]{2,50}$/;
@@ -41,6 +42,8 @@ export class RegisterOperatorDto {
   @IsOptional() @IsString() @MaxLength(300) address?: string;
   @IsOptional() @IsString() @MaxLength(100) city?: string;
   @IsOptional() @Matches(POSTAL_CODE, { message: 'postalCode must be a Canadian postal code' }) postalCode?: string;
+  /** UTC of the business address, written in the certificate request (L=): -05:00, or -04:00 for Îles-de-la-Madeleine and Basse-Côte-Nord. */
+  @IsOptional() @IsIn(ADDRESS_UTC_VALUES, { message: 'addressUtc must be -05:00, or -04:00 for Îles-de-la-Madeleine and Basse-Côte-Nord' }) addressUtc?: string;
   @IsOptional() @IsString() @MaxLength(30) phone?: string;
   @IsOptional() @IsEmail() @MaxLength(200) email?: string;
 
@@ -65,6 +68,8 @@ export class UpdateOperatorDto {
   @IsOptional() @IsString() @MaxLength(300) address?: string;
   @IsOptional() @IsString() @MaxLength(100) city?: string;
   @IsOptional() @Matches(POSTAL_CODE, { message: 'postalCode must be a Canadian postal code' }) postalCode?: string;
+  /** Used by the next certificate request (CRT AJO or REM); a certificate already issued keeps its value. */
+  @IsOptional() @IsIn(ADDRESS_UTC_VALUES, { message: 'addressUtc must be -05:00, or -04:00 for Îles-de-la-Madeleine and Basse-Côte-Nord' }) addressUtc?: string;
   @IsOptional() @IsString() @MaxLength(30) phone?: string;
   @IsOptional() @IsEmail() @MaxLength(200) email?: string;
 

@@ -1,9 +1,9 @@
 /**
  * Local WEB-SRM simulator (SIMULATOR / DEV only; never mounted in ESSAI or PROD).
  *
- * It is OUR test double, not Revenu Québec's behaviour: it checks the public rules we know (headers present,
- * ECDSA P-256 signatures of the request and of each transaction, the signature chain, amounts, duplicate numbers,
- * e-commerce payment rule) and issues real X.509 certificates from a throwaway local CA so CRT works end to end.
+ * It is OUR test double, not Revenu Québec's behaviour: it checks the public rules we know (ASCII request text,
+ * headers present, ECDSA P-256 signatures of the request and of each transaction, the signature chain, amounts,
+ * duplicate numbers, e-commerce payment rule, the address UTC in the CSR) and issues real X.509 certificates from a throwaway local CA so CRT works end to end.
  * Passing here proves nothing about conformity; only Revenu Québec's DEV / ESSAI environments can.
  * QR codes point to this local simulator, never to a Revenu Québec or mev-web domain.
  */
@@ -11,10 +11,11 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import * as crypto from 'crypto';
 import * as x509 from '@peculiar/x509';
 import { APP_CONFIG, AppConfig } from '../config/app-config';
+import { isAscii } from '../common/ascii-json';
 import { computeTaxes } from '../common/money';
 import { civilTime } from '../common/time';
 import { certThumbprint, FIRST_PRECED, SIGNATURE_RE, transactionSignedString, verifyP256 } from '../crypto/ecdsa';
-import { P256_ALG } from '../crypto/csr';
+import { ADDRESS_UTC_VALUES, P256_ALG } from '../crypto/csr';
 import { decryptQrPayload } from '../crypto/qr-crypto';
 import type { MevError, TransActu } from '../mev-web/mev-web.types';
 import { SimulatorStore } from './simulator-state';
@@ -97,7 +98,13 @@ export class MevSimulatorService {
     return errors;
   }
 
+  /** SW-76 §4.2: a request is ASCII text. Our own rule check, so a regression is caught before Revenu Québec does. */
+  private assertAscii(rawBody: string | undefined): void {
+    if (rawBody !== undefined && !isAscii(rawBody)) throw new SimRequestError([err('ASCII', 'the request must be ASCII text (SW-76 §4.2): escape non-ASCII characters')]);
+  }
+
   private authDevice(h: Record<string, string | undefined>, rawBody: string) {
+    this.assertAscii(rawBody);
     const errors = this.checkHeaders(h, true);
     if (errors.length) throw new SimRequestError(errors);
     const dev = this.store.get().devices[h.idapprl as string];
@@ -117,6 +124,7 @@ export class MevSimulatorService {
   async enrolement(h: Record<string, string | undefined>, body: { reqCertif?: { modif?: string; csr?: string; noSerie?: string } }, rawBody?: string): Promise<SimResponse> {
     const req = body?.reqCertif;
     const renewal = req?.modif === 'REM';
+    if (rawBody !== undefined && !isAscii(rawBody)) return { status: 400, body: { retourCertif: { listErr: [err('ASCII', 'the request must be ASCII text (SW-76 §4.2)')] } } };
     const errors = this.checkHeaders(h, false);
     if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(h.codautori ?? '')) errors.push(err('CODAUTORI', 'CODAUTORI must look like XXXX-XXXX'));
     if (!h.notps || !h.notvq) errors.push(err('NOTAX', 'NOTPS and NOTVQ headers are required'));
@@ -156,6 +164,11 @@ export class MevSimulatorService {
     const o = csr.subjectName.getField('O')[0] ?? '';
     if (o !== `RBC-${h.codautori}`) {
       return { status: 400, body: { retourCertif: { listErr: [err('CSR-SUBJECT', 'CSR subject O must be <sector>-<authorization code>')] } } };
+    }
+    // « Configuration du SEV »: the UTC associated with the business address, -05:00 or -04:00 (never a DST offset).
+    const l = csr.subjectName.getField('L')[0] ?? '';
+    if (!(ADDRESS_UTC_VALUES as readonly string[]).includes(l)) {
+      return { status: 400, body: { retourCertif: { listErr: [err('CSR-UTC', 'CSR subject L must be the address UTC: -05:00, or -04:00 for Îles-de-la-Madeleine and Basse-Côte-Nord')] } } };
     }
 
     const ca = await this.ca();
@@ -287,12 +300,19 @@ export class MevSimulatorService {
 
   // ─── DOC ───────────────────────────────────────────────────────────────────
 
-  document(h: Record<string, string | undefined>, rawBody: string, body: { reqDoc?: { typDoc?: string; annee?: number } }): SimResponse {
+  document(h: Record<string, string | undefined>, rawBody: string, body: { reqDoc?: { typDoc?: string; annee?: number; sommVentes?: Record<string, unknown> } }): SimResponse {
     this.authDevice(h, rawBody);
     const d = body?.reqDoc;
     if (d?.typDoc !== 'RUT' || !Number.isInteger(d?.annee)) {
       return { status: 400, body: { retourDoc: { listErr: [err('REQDOC', 'only typDoc RUT with a year is simulated')] } } };
     }
+    // The publicly listed summary content (« Production du rapport de l'utilisateur »); the names are SPEC.
+    const sv = d.sommVentes ?? {};
+    const missing = [
+      ...['nbTrans', 'nbTransPai'].filter((k) => !Number.isInteger(sv[k])),
+      ...['avantTax', 'TPS', 'TVQ', 'apresTax', 'ajus', 'mtdu'].filter((k) => !AMOUNT.test(String(sv[k] ?? ''))),
+    ];
+    if (missing.length) return { status: 400, body: { retourDoc: { listErr: [err('SOMMVENTES', `sommVentes is missing or malformed: ${missing.join(', ')}`)] } } };
     const s = this.store.get();
     s.docs += 1;
     this.store.save();

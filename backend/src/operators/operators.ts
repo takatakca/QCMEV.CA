@@ -77,6 +77,7 @@ export class OperatorsService {
           address: dto.address,
           city: dto.city,
           postalCode: dto.postalCode,
+          ...(dto.addressUtc ? { addressUtc: dto.addressUtc } : {}),
           phone: dto.phone,
           email: dto.email,
           environment: this.cfg.mevEnvironment as MevEnvironment,
@@ -113,7 +114,7 @@ export class OperatorsService {
   async me(operatorId: string) {
     const op = await this.prisma.operator.findUnique({
       where: { id: operatorId },
-      select: { id: true, name: true, sector: true, address: true, city: true, province: true, postalCode: true, phone: true, email: true, environment: true, createdAt: true },
+      select: { id: true, name: true, sector: true, address: true, city: true, province: true, postalCode: true, addressUtc: true, phone: true, email: true, environment: true, createdAt: true },
     });
     if (!op) throw new NotFoundException('Operator not found');
     return { ...op, serverEnvironment: this.cfg.mevEnvironment, certified: this.cfg.certified };
@@ -122,7 +123,7 @@ export class OperatorsService {
   /** Whitelisted fields only (UpdateOperatorDto). Environment and tax numbers: ADMIN only, with their own rules. */
   async update(user: AuthUser, body: UpdateOperatorDto) {
     const data: Prisma.OperatorUpdateInput = {};
-    for (const k of ['name', 'address', 'city', 'postalCode', 'phone', 'email'] as const) {
+    for (const k of ['name', 'address', 'city', 'postalCode', 'addressUtc', 'phone', 'email'] as const) {
       if (typeof body[k] === 'string') data[k] = (body[k] as string).trim().slice(0, 200);
     }
     if (body.noTPS !== undefined || body.noTVQ !== undefined) {

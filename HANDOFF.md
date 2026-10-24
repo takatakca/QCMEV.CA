@@ -160,3 +160,34 @@ simulator's `mevDown` switch instead of pointing the operator at an unreachable 
 2. Revenu Québec partner documents (SW-73, .A, .B, .D) → close `SPEC_GAPS.md` rows; personalized SW-77 cases → DEV, then ESSAI.
 3. Product decision: keep `QCMEV_PUBLIC_REGISTRATION` open outside the simulator? Non-exportable key custody (KMS / HSM) before PROD.
 4. Run `docker compose up --build` once on a machine with Docker.
+
+---
+
+## 2026-10-24 — Review round 1 on the protocol layer (branch `feature/official-protocol-foodhub`, PR #3)
+
+Five findings of the round-1 review, each checked against Revenu Québec's public pages before fixing. All five were real.
+
+| # | Finding | Fix | Source |
+|---|---|---|---|
+| 1 | Requests were sent as raw UTF-8 JSON (accents in item and user names) | `common/ascii-json.ts`: every character above 0x7E is sent as a JSON `\uXXXX` escape; SIGNATRANSM signs the exact ASCII bytes; the simulator refuses a non-ASCII body (`SIM-ASCII`). SPEC_GAPS #29 (escapes vs transliteration) | SW-76 2025-06 §4.2 « en utilisant la table ASCII » |
+| 2 | CSR `L=` was today's daylight-saving offset (-04:00 from March to November) | `Operator.addressUtc` (new column, default `-05:00`; `-04:00` for Îles-de-la-Madeleine / Basse-Côte-Nord), register / settings DTOs, seed, dashboard setting; `crypto/csr.ts` refuses any other value; simulator checks it. Transaction `utc` unchanged, now SPEC_GAPS #30 | « Configuration du système d'enregistrement des ventes » |
+| 3 | An expired certificate still issued invoices (warning + « CERTIFICAT INVALIDE ») | `TransactionsService.issue()` refuses: 423 `certReady` + CRITICAL audit, nothing signed or stored (sales, credit notes, reprints, Food Hub); the queue is held (nothing sent) until the renewal; the user report is displayed but not transmitted | « Obtention et suppression d'un ou plusieurs certificats numériques », Expiration |
+| 4 | User report marked "built" without the listed contents; summary lacked 3 fields | `reports/user-report-renderer.ts`: business name, TPS / TVQ, user, address (numéro, rue, ville, code postal), last document of the device, device id, SEV id and version, login and production times, QR; summary never displayed. `sommVentes` gains `nbTransPai`, `ajus`, `mtdu` (names SPEC). `UserReport` keeps `deviceId`, `userId`, `summaryJson`, `displayJson`. Dashboard page rewritten. CERTIFICATION.md → partial; SPEC_GAPS #11, #31 | « Production du rapport de l'utilisateur », SW-76 §4.4.3 |
+| 5 | A 4xx without `listErr` (gateway 401 / 403, wrong path 404, HTML page) counted as accepted (lost core-line rule) | `MevWebService.post()`: such a 4xx gets `{codRetour: "HTTP"}` → REJECTED, queue FAILED, audit (UTL: user not registered); 408 / 429 and a 2xx without the `retour*` envelope → unreachable (offline mode, sent again). SPEC_GAPS #32 | HANDOFF task 1 (core line) |
+
+Migration: new `prisma/migrations/20261024150000_address_utc_user_report` (adds `Operator.addressUtc`, four nullable `UserReport` columns); the init migration is unchanged.
+
+**Checks (2026-10-24, Windows, Node 22, embedded PostgreSQL 16):** backend typecheck 0 errors, lint 0, Jest 121 unit tests
+pass (27 new in `test/protocol-round1.spec.ts`; 20 database tests skipped without a DB); frontend typecheck / lint / `next build`
+OK (10 pages); `tools/local-run/run-local.mjs` ALL GREEN: build, `prisma migrate deploy`, migration drift = no difference,
+SW-77 preparation 20/20 (new: ASCII, EXPIRED, CSR L=-05:00 in SW77-01, user report contents in SW77-11), seed, CRT + UTL,
+`scripts/run-test-cases.ts` 13/13, Food Hub e2e 38/38 + 2/2 after restart, login rate limit 429.
+
+**Food Hub:** no change needed (an expired certificate answers the existing 423 `location_not_ready` / `certReady`,
+which Food Hub already treats as "not ready": slow retry + alert). CONTRACT.md says so.
+
+### ▶ NEXT SESSION — start here (replaces the list above)
+1. Owner: review + merge PR #3 (`feature/official-protocol-foodhub`).
+2. Revenu Québec partner documents (SW-73, .A, .B, .D) → close `SPEC_GAPS.md` rows (#29 ASCII form, #30 `utc`, #31–32 new).
+3. Product decision: keep `QCMEV_PUBLIC_REGISTRATION` open outside the simulator? Non-exportable key custody (KMS / HSM) before PROD.
+4. Run `docker compose up --build` once on a machine with Docker.
