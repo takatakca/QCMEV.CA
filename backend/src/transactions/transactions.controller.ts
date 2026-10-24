@@ -24,8 +24,22 @@ export class TransactionsController {
   /** Create a new transaction (ADD) */
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  async create(@Request() req: any, @Body() dto: any) {
-    return this.transactionsService.createTransaction(req.user.operatorId, req.user.sub, dto);
+  async create(@Request() req: any, @Body() body: any) {
+    return this.transactionsService.createTransaction({
+      operatorId:    req.user.operatorId,
+      deviceId:      body.deviceId,
+      userId:        req.user.sub,
+      transactionType: body.transactionType ?? 'ADDITION',
+      items:         body.items ?? [],
+      paymentMode:   body.paymentMode ?? 'CASH',
+      printMode:     body.printMode,
+      tableNumber:   body.tableNumber,
+      numberOfCovers: body.numberOfCovers,
+      tipsAmount:    body.tipsAmount,
+      discountAmount: body.discountAmount,
+      relatedTransactionId: body.originalTransactionId ?? body.relatedTransactionId,
+      isTraining:    body.isTraining ?? false,
+    });
   }
 
   /** Cancel an existing transaction (ANN) */
@@ -39,10 +53,9 @@ export class TransactionsController {
   @Get('daily-summary')
   async dailySummary(
     @Request() req: any,
-    @Query('deviceId') deviceId: string,
     @Query('date') date?: string,
   ) {
-    return this.transactionsService.getDailySummary(req.user.operatorId, deviceId, date);
+    return this.transactionsService.getDailySummary(req.user.operatorId, date);
   }
 
   /** Get receipt data for a transaction */
@@ -61,8 +74,9 @@ export class TransactionsController {
   /** Add item after invoice (SW-76 §4.6) */
   @Post(':id/items')
   @HttpCode(HttpStatus.OK)
-  async addItem(@Request() req: any, @Param('id') id: string, @Body() item: any) {
-    return this.transactionsService.addItemAfterInvoice(id, req.user.sub, item);
+  async addItem(@Request() req: any, @Param('id') id: string, @Body() body: any) {
+    const { reason, ...item } = body;
+    return this.transactionsService.addItemAfterInvoice(id, req.user.sub, item, reason ?? 'Non spécifié');
   }
 
   /** Remove item after invoice (SW-76 §4.6) */
@@ -74,7 +88,7 @@ export class TransactionsController {
     @Param('itemId') itemId: string,
     @Body() body: any,
   ) {
-    return this.transactionsService.removeItemAfterInvoice(id, itemId, req.user.sub, body?.reason);
+    return this.transactionsService.removeItemAfterInvoice(id, req.user.sub, itemId, body?.reason ?? 'Non spécifié');
   }
 
   /** Modify item price after invoice (SW-76 §4.6) */
@@ -86,6 +100,6 @@ export class TransactionsController {
     @Param('itemId') itemId: string,
     @Body() body: any,
   ) {
-    return this.transactionsService.modifyPriceAfterInvoice(id, itemId, req.user.sub, body.newUnitPrice, body?.reason);
+    return this.transactionsService.modifyPriceAfterInvoice(id, req.user.sub, itemId, body.newUnitPrice, body?.reason ?? 'Non spécifié');
   }
 }

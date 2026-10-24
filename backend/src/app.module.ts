@@ -10,6 +10,7 @@ import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ScheduleModule } from '@nestjs/schedule';
+import { HttpModule } from '@nestjs/axios';
 
 // Core
 import { PrismaService } from './prisma/prisma.service';
@@ -57,6 +58,7 @@ import { ReportsController } from './reports/reports.controller';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     ScheduleModule.forRoot(),
+    HttpModule,
     PassportModule,
     JwtModule.register({
       secret:      process.env.JWT_SECRET ?? 'takatak-mev-dev-secret-CHANGE-IN-PROD',

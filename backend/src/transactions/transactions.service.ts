@@ -284,23 +284,28 @@ export class TransactionsService {
     return this.auditPostInvoiceAction(transactionId, userId, 'Ajout d\'un item après facturation');
   }
 
-  async removeItemAfterInvoice(transactionId: string, userId: string, itemId: string, reason: string) {
+  async removeItemAfterInvoice(transactionId: string, userId: string, itemId: string, reason: string = 'Non spécifié') {
     await this.ensureInvoiced(transactionId);
     const item = await this.prisma.transactionItem.findUnique({ where: { id: itemId } });
+    if (!item) throw new NotFoundException('Item not found');
     await this.createModificationLog(transactionId, userId, ModificationType.REMOVE_ITEM, item, null, reason);
-    return this.auditPostInvoiceAction(transactionId, userId, 'Suppression d\'un item après facturation');
+    return this.auditPostInvoiceAction(transactionId, userId, `Suppression de l'item "${item.description}" après facturation`);
   }
 
-  async modifyPriceAfterInvoice(transactionId: string, userId: string, itemId: string, newPrice: number, reason: string) {
+  async modifyPriceAfterInvoice(transactionId: string, userId: string, itemId: string, newPrice: number, reason: string = 'Non spécifié') {
     await this.ensureInvoiced(transactionId);
     const item = await this.prisma.transactionItem.findUnique({ where: { id: itemId } });
-    await this.createModificationLog(transactionId, userId, ModificationType.MODIFY_PRICE, { unitPrice: item?.unitPrice }, { unitPrice: newPrice }, reason);
-    return this.auditPostInvoiceAction(transactionId, userId, 'Modification de prix après facturation');
+    if (!item) throw new NotFoundException('Item not found');
+    const oldPrice = item.unitPrice;
+    await this.prisma.transactionItem.update({ where: { id: itemId }, data: { unitPrice: newPrice } });
+    await this.createModificationLog(transactionId, userId, ModificationType.MODIFY_PRICE, { unitPrice: oldPrice }, { unitPrice: newPrice }, reason);
+    return this.auditPostInvoiceAction(transactionId, userId, `Prix modifié: ${oldPrice} → ${newPrice} (${reason})`);
   }
 
   // ─── Daily Summary ────────────────────────────────────────────────────────
 
-  async getDailySummary(operatorId: string, civilDate: string) {
+  async getDailySummary(operatorId: string, civilDateInput?: string) {
+    const civilDate = civilDateInput ?? this.getCivilDate();
     const transactions = await this.prisma.transaction.findMany({
       where: { operatorId, civilDate, status: { not: TransactionStatus.CANCELLED } },
     });

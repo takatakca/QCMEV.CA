@@ -15,10 +15,10 @@ export class OperatorsService {
   async create(data: {
     name: string;
     neq: string;
-    authorizationCode: string;
+    authorizationCode?: string;
     sector: string;
     address?: string;
-    mevEnvironment?: string;
+    environment?: string; // MevEnvironment: SIMULATOR | DEVELOPMENT | TESTING | PRODUCTION
   }) {
     return this.prisma.operator.create({
       data: {
@@ -27,7 +27,7 @@ export class OperatorsService {
         authorizationCode: data.authorizationCode,
         sector:            data.sector as any,
         address:           data.address,
-        mevEnvironment:    (data.mevEnvironment ?? 'SIMULATOR') as any,
+        environment:       (data.environment ?? 'SIMULATOR') as any,
         sevVersion:        '1.0.0',
       },
     });

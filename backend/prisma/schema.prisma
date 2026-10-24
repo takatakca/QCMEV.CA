@@ -103,10 +103,14 @@ enum AuditEventType {
   CERTIFICATE_REQUESTED
   CERTIFICATE_RECEIVED
   USER_REGISTERED
+  USER_LOGIN
+  USER_LOGIN_FAILED
+  USER_LOGOUT
   USER_REPORT_GENERATED
   OFFLINE_MODE_ACTIVATED
   OFFLINE_MODE_DEACTIVATED
   BATCH_SUBMITTED
+  MEV_SUBMISSION_FAILED
   MEV_ERROR
   AUTH_LOGIN
   AUTH_LOGOUT
@@ -148,8 +152,8 @@ model Operator {
   id                    String         @id @default(uuid())
   name                  String
   neq                   String         @unique  // Numéro d'entreprise du Québec
-  tpsNumber             String         // Numéro TPS
-  tvqNumber             String         // Numéro TVQ
+  tpsNumber             String?        // Numéro TPS (set after certificate registration)
+  tvqNumber             String?        // Numéro TVQ (set after certificate registration)
   sector                SectorType
   authorizationCode     String?        // Issued by Revenu Québec
   serverAuthCode        String?        // For multi-restaurant server
@@ -161,7 +165,7 @@ model Operator {
   postalCode            String?
   phone                 String?
   email                 String?
-  environment           MevEnvironment @default(SIMULATOR)
+  environment           MevEnvironment @default(SIMULATOR)  // Active MEV-WEB environment
   createdAt             DateTime       @default(now())
   updatedAt             DateTime       @updatedAt
 
@@ -195,17 +199,18 @@ model Device {
 }
 
 model SEVUser {
-  id          String    @id @default(uuid())
-  operatorId  String
-  username    String    @unique
-  password    String    // bcrypt hash
-  firstName   String
-  lastName    String
-  role        UserRole  @default(CASHIER)
-  mevUserId   String?   // ID returned by MEV-WEB UTL request
-  isActive    Boolean   @default(true)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id           String    @id @default(uuid())
+  operatorId   String
+  username     String    @unique
+  passwordHash String    // bcrypt hash
+  firstName    String
+  lastName     String
+  role         UserRole  @default(CASHIER)
+  mevUserId    String?   // identifiantUtilisateur returned by MEV-WEB UTL request
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime? // Updated on each successful login
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   operator     Operator    @relation(fields: [operatorId], references: [id])
   transactions Transaction[]
@@ -221,7 +226,7 @@ model Certificate {
   subject             String?
   issuer              String?
   validFrom           DateTime?
-  validUntil          DateTime?
+  validTo             DateTime?   // validUntil — renamed to match service code
   pemCertificate      String?         @db.Text
   encryptedPrivateKey String?         @db.Text  // AES-256-CBC encrypted
   csrPem              String?         @db.Text
