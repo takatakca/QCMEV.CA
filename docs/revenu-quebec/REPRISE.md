@@ -76,3 +76,10 @@ L’utilisateur choisit **takatak.ca@gmail.com**, autorise la préparation compl
 ## Dernière demande — deux PDF ensemble et contrôle des champs
 
 L’utilisateur demande une résolution électronique et l’envoi des deux pièces ensemble. Créés : `Resolution-CA-Revers-Canada-SW-10-SIGNATURES-ELECTRONIQUES.pdf` (3 champs de signature et 3 dates) et `Dossier-SW-10-et-resolution-electronique-A-COMPLETER.pdf` (7 pages; six pages SW-10 inchangées au rendu, puis résolution avec champs). Vérifications détaillées dans **VERIFICATION-CHAMPS.md**. Les champs de signature sont vides; aucune signature d’administrateur inventée, aucune résolution adoptée constatée. ZIP local `/workspace/SW-10-et-resolution-electronique.zip` contenant les deux PDF séparés, testé. Réunir les pièces avant signature numérique; ne pas modifier après. Aucun envoi effectué. Le SW-10 conserve les deux contacts préexistants; takatak.ca@gmail.com reste l’expéditeur choisi.
+
+
+## Problème de lecture signalé — copie de compatibilité
+
+L’utilisateur signale « I can’t read the file », sans encore identifier le fichier ni l’erreur complète. Tous les PDF existants ont été ouverts et rendus localement sans réparation; le dossier combiné mesure 974 559 octets (moins de 1 Mo), donc aucune preuve d’un dépassement de 40 Mo ou Go. Le problème de téléchargement ou de lecteur reste à préciser.
+
+`SW10-Resolution-LECTURE.pdf` : copie standard de 7 pages créée avec widgets aplatis et polices réduites, texte conservé et chaque page rendue avec succès. Destinée à la lecture/impression, sans champs interactifs. Elle ne remplace pas la résolution électronique à signer. Aucune nouvelle signature, adoption ou transmission effectuée.

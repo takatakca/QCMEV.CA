@@ -21,3 +21,10 @@ Ces contrôles portent sur les documents produits; ils ne constituent ni une sig
 - Dossier combiné : 7 pages; rendu des 6 pages SW-10 égal à la copie de référence; widgets de la résolution préservés à la page 7.
 - Vérification des coordonnées, annexe et champs restant vides consignée dans VERIFICATION-CHAMPS.md; résolution électronique contrôlée visuellement.
 - ZIP de deux PDF contrôlé sans erreur. Empreintes des nouveaux PDF ajoutées. Aucun envoi effectué.
+
+
+## Problème de lecture signalé — copie de compatibilité
+
+L’utilisateur signale « I can’t read the file », sans encore identifier le fichier ni l’erreur complète. Tous les PDF existants ont été ouverts et rendus localement sans réparation; le dossier combiné mesure 974 559 octets (moins de 1 Mo), donc aucune preuve d’un dépassement de 40 Mo ou Go. Le problème de téléchargement ou de lecteur reste à préciser.
+
+`SW10-Resolution-LECTURE.pdf` : copie standard de 7 pages créée avec widgets aplatis et polices réduites, texte conservé et chaque page rendue avec succès. Destinée à la lecture/impression, sans champs interactifs. Elle ne remplace pas la résolution électronique à signer. Aucune nouvelle signature, adoption ou transmission effectuée.
