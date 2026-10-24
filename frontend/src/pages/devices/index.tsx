@@ -3,20 +3,15 @@
  */
 import React, { useEffect, useState } from 'react';
 import Layout from '../../components/Layout';
-import { listDevices, flushDeviceQueue, getDeviceOfflineStatus } from '../../lib/api';
+import { listDevices, flushDeviceQueue, registerDevice } from '../../lib/api';
 
-// Devices hold private identity values (file number, authorization code): they are created with
-// `npm run seed:operator` from a file outside the repository, never from the dashboard.
-const registerDevice = async (_: unknown): Promise<never> => {
-  throw { response: { data: { message: 'Les appareils sont créés avec npm run seed:operator (valeurs privées hors du dépôt).' } } };
-};
-
+// The file number (noDossFO) and the authorization code are private identity values: they are sent once, encrypted
+// by the backend, never returned, and frozen once the device holds its certificate.
 const DEVICE_TYPES = [
+  { value: 'SERVER',         label: 'Serveur (QCMEV signe pour l’établissement)' },
   { value: 'CASH_REGISTER',  label: 'Caisse enregistreuse' },
   { value: 'TABLET',         label: 'Tablette' },
-  { value: 'LAPTOP',         label: 'Ordinateur portable' },
   { value: 'MOBILE',         label: 'Mobile' },
-  { value: 'OTHER',          label: 'Autre' },
 ];
 
 export default function DevicesPage() {
@@ -30,8 +25,10 @@ export default function DevicesPage() {
   // New device form state
   const [name, setName]             = useState('');
   const [serial, setSerial]         = useState('');
-  const [deviceType, setDeviceType] = useState('CASH_REGISTER');
+  const [deviceType, setDeviceType] = useState('SERVER');
   const [location, setLocation]     = useState('');
+  const [fileNumber, setFileNumber] = useState('');
+  const [authCode, setAuthCode]     = useState('');
 
   const loadDevices = () => {
     setLoading(true);
@@ -48,12 +45,13 @@ export default function DevicesPage() {
     setSubmitting(true);
     setError('');
     try {
-      await registerDevice({ name, serialNumber: serial, deviceType, location });
+      await registerDevice({ name, serialNumber: serial, deviceType, description: location, fileNumber, authorizationCode: authCode });
       setShowForm(false);
-      setName(''); setSerial(''); setLocation('');
+      setName(''); setSerial(''); setLocation(''); setFileNumber(''); setAuthCode('');
       loadDevices();
     } catch (err: any) {
-      setError(err.response?.data?.message ?? 'Erreur lors de l\'enregistrement');
+      const m = err.response?.data?.message;
+      setError(Array.isArray(m) ? m.join(' · ') : m ?? 'Erreur lors de l’enregistrement');
     } finally {
       setSubmitting(false);
     }
@@ -128,6 +126,22 @@ export default function DevicesPage() {
                   className="w-full border border-gray-300 rounded-lg px-3 py-2"
                 />
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">N° de dossier (facturation obligatoire)</label>
+                <input
+                  value={fileNumber} onChange={(e) => setFileNumber(e.target.value)}
+                  placeholder="facultatif maintenant" autoComplete="off"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Code d’autorisation (XXXX-XXXX)</label>
+                <input
+                  type="password" value={authCode} onChange={(e) => setAuthCode(e.target.value.toUpperCase())}
+                  placeholder="facultatif maintenant" autoComplete="off"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                />
+              </div>
               <div className="col-span-2">
                 <button type="submit" disabled={submitting} className="btn-primary disabled:opacity-50">
                   {submitting ? 'Enregistrement...' : 'Enregistrer'}
@@ -151,7 +165,7 @@ export default function DevicesPage() {
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-1">
-                      <h3 className="font-semibold text-gray-900">{device.name}</h3>
+                      <h3 className="font-semibold text-gray-900">{device.name ?? device.serialNumber}</h3>
                       <span className={device.offlineMode ? 'badge-yellow' : 'badge-green'}>
                         {device.offlineMode ? 'Hors ligne' : 'En ligne'}
                       </span>
@@ -164,19 +178,17 @@ export default function DevicesPage() {
                       </div>
                       <div>
                         <dt className="text-gray-500">Emplacement</dt>
-                        <dd>{device.location || '–'}</dd>
+                        <dd>{device.description || '–'}</dd>
                       </div>
                       <div>
-                        <dt className="text-gray-500">File d'attente</dt>
-                        <dd className={device.offlineQueueCount > 0 ? 'text-amber-600 font-medium' : ''}>
-                          {device.offlineQueueCount ?? 0} tx
-                        </dd>
+                        <dt className="text-gray-500">Certificat (IDAPPRL)</dt>
+                        <dd className="font-mono">{device.mevDeviceId ?? 'aucun'}</dd>
                       </div>
                     </dl>
                   </div>
 
                   <div className="flex gap-2 ml-4">
-                    {device.offlineMode && (device.offlineQueueCount ?? 0) > 0 && (
+                    {device.offlineMode && (
                       <button
                         onClick={() => handleFlush(device.id)}
                         disabled={flushing === device.id}

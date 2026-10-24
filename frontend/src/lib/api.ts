@@ -83,8 +83,10 @@ export const getReceipt = (id: string) => api.get(`/transactions/${id}/receipt`)
 export const reprint = (id: string, mode: 'RPR' | 'DUP') => api.post(`/transactions/${id}/reprint`, { mode });
 export const getDailySummary = (date?: string) => api.get('/transactions/daily-summary', { params: { date } });
 
-// Devices (created by `npm run seed:operator`, never from the dashboard)
+// Devices. The file number and authorization code are write-only: sent once, encrypted, never returned.
 export const listDevices = () => api.get('/devices');
+export const registerDevice = (data: { name?: string; serialNumber: string; deviceType?: string; description?: string; model?: string; firmwareVersion?: string; fileNumber?: string; authorizationCode?: string }) =>
+  api.post('/devices', Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined && v !== '')));
 export const getDeviceOfflineStatus = (id: string) => api.get(`/devices/${id}/offline-status`);
 export const flushDeviceQueue = (id: string) => api.post(`/devices/${id}/flush-queue`);
 
@@ -93,14 +95,19 @@ export const listCertificates = () => api.get('/certificates');
 export const getActiveCert = async () => {
   const r = await api.get('/certificates');
   const active = (r.data ?? []).find((c: any) => c.type === 'SEV' && c.isActive) ?? null;
-  return { ...r, data: active ? { ...active, certificateType: active.type, validTo: active.validUntil } : null };
+  return { ...r, data: active ? { ...active, certificateType: active.type, validTo: active.validUntil, issuedAt: active.validFrom, expiresAt: active.validUntil } : null };
 };
 export const requestCertificate = async (deviceId?: string) => {
   const id = deviceId ?? (await api.get('/devices')).data?.[0]?.id;
   if (!id) throw new Error('Aucun appareil');
   return api.post(`/devices/${id}/certificate`, {});
 };
-export const getExpiringCerts = () => api.get('/certificates/expiring');
+export const getExpiringCerts = async () => {
+  const r = await api.get('/certificates/expiring');
+  return { ...r, data: (r.data ?? []).map((c: any) => ({ ...c, certificateType: 'SEV', expiresAt: c.validUntil })) };
+};
+/** Renews every certified device now (CRT REM), like the nightly job. */
+export const renewCertificates = () => api.post('/certificates/renew', {});
 
 // Reports (DOC RUT, transmitted every time it is displayed)
 export const listReports = () => api.get('/reports');

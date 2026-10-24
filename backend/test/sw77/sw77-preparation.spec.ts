@@ -381,6 +381,8 @@ suite('SW-77 preparation suite (database + local simulator; not Revenu Québec S
     // No request with the tampered transaction ever reached MEV-WEB.
     const sentModPai = (await prisma.mevRequestLog.findMany({ where: { operatorId: operatorA, requestType: 'TRX' } })).map((l) => JSON.stringify(l.requestPayload));
     expect(sentModPai.some((s) => s.includes('"CARTE"'))).toBe(false);
+    // Put the stored record back (it stays REJECTED) so that database-wide audits of the chain still recompute.
+    await prisma.transaction.update({ where: { id: tx.id }, data: { requestJson: stored.requestJson as object } });
   }));
 
   it('operator B is untouched and can certify its own device', track('TENANT-B')(async () => {

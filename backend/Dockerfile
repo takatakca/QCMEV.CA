@@ -2,6 +2,19 @@
 # Build: npm ci → prisma generate → nest build. Start: prisma migrate deploy → node dist/main.js.
 # No secret is baked in: every value comes from the environment at run time (see .env.example).
 
+# Development image (docker-compose.dev.yml only): every dependency, nest --watch, SIMULATOR. Never deployed.
+FROM node:20-alpine AS dev
+WORKDIR /app
+RUN apk add --no-cache openssl
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY prisma ./prisma
+RUN npx prisma generate
+COPY tsconfig.json tsconfig.build.json nest-cli.json ./
+COPY src ./src
+EXPOSE 3001
+CMD ["sh", "-c", "npx prisma migrate deploy && npx nest start --watch"]
+
 FROM node:20-alpine AS build
 WORKDIR /app
 RUN apk add --no-cache openssl

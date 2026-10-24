@@ -1,4 +1,13 @@
-# Takatak MEV dashboard — production image.
+# Takatak MEV dashboard — production image (the last stage). The dev stage is for docker-compose.dev.yml only.
+FROM node:20-alpine AS dev
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY . .
+ENV NEXT_TELEMETRY_DISABLED=1
+EXPOSE 3000
+CMD ["npm", "run", "dev"]
+
 FROM node:20-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
