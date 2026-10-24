@@ -20,7 +20,7 @@
 | 4 | Migration renamed/regenerated + Docker fixes (see log) | `prisma/migrations/*`, both Dockerfiles, both compose files | ✅ done |
 | 5 | Operator registration flow (public register, UTL headers, MEV user sync) | `operators/*`, `auth.service.ts`, `mev-web.service.ts`, `mev-time.ts` | ✅ done (tested live) |
 | 6 | Certificate lifecycle + nightly renewal job | `certificates/certificate-lifecycle.service.ts` (new), `certificates.*`, simulator | ✅ done (tested live) |
-| 7 | Full build verification (backend + frontend) | — | ⏳ pending |
+| 7 | Full build verification (backend + frontend) | — | ✅ done |
 
 ### Blocked on outside parties (cannot be done in code)
 - SW-77 certification run needs Revenu Québec TESTING credentials
@@ -76,11 +76,25 @@
   - Init migration regenerated again (Certificate.deviceId + index) and re-verified: deploy OK, zero drift.
   - Live run: register → login → device → certificate (admin auto-synced) → renew → online sale ACCEPTED (`SIM-20261024-000001`) → operator env set to unreachable → 2 sales `QUEUED_OFFLINE`, device offline → back to simulator → flush `{submitted:2, remaining:0}` → all 3 `INVOICED/ACCEPTED` → device online. Audit: OFFLINE_MODE_ACTIVATED → BATCH_SUBMITTED → OFFLINE_MODE_DEACTIVATED. Nightly job run directly → renewed.
 
+- 2026-10-24 — Task 7 + extra findings done.
+  - **Frontend did not compile** (2 type errors): settings page called `requestCertificate()` without the device id → now uses the operator's first active device (clear message if none); `getDailySummary()` client required a `deviceId` the backend never takes → signature aligned (`date?` only). `next build` ✅ (10 pages), `tsc` ✅.
+  - All 18 frontend API calls verified against the backend's mapped routes — 0 mismatches.
+  - ANN/COR/NDC now send the original's MEV transaction number. Tenant isolation added for devices and for sale creation.
+  - Final: backend `nest build` ✅, frontend `next build` ✅, migration ✅ on Postgres 16.
+
+## ▶ NEXT SESSION — start here
+1. **Transactions tenant isolation (security, do first):** `GET /transactions/:id/receipt`, `POST /transactions/:id/cancel`, `/items`, `/items/:itemId/remove|price` load by id without checking `operatorId` (see `transactions.service.ts` ~L326, 334, 414, 441). Same pattern as `DevicesService.assertOwned()`.
+2. Edge case: cancelling a sale that is still `QUEUED_OFFLINE` → original has no MEV number yet → `numeroTransactionOriginal` undefined in the queued ANN. Option: build the payload at flush time, or block until accepted.
+3. Run `docker compose up --build` on a machine with Docker (cloud sandbox has none) — expected to work after task 4 fixes. If the DB was created with the old 2024 migration: `docker compose down -v` first.
+4. Product decision: gate public `POST /api/operators/register` in PRODUCTION (invite code / env flag)?
+5. Replace `@Body() dto: any` on `POST /devices`, `POST /operators/users`, `POST /transactions` with class-validator DTOs (pattern: `operators/dto/register-operator.dto.ts`).
+6. External: Revenu Québec TESTING credentials → SW-77 certification run → submission.
+
 ### Findings to fix next (found while reading, not yet done)
 - [x] ~~Civil date uses UTC~~ → fixed in task 5 (`mev-web/mev-time.ts`, `America/Toronto`).
-- [ ] **`numeroTransactionOriginal` sends our internal UUID** (`relatedTransactionId`) instead of the original's MEV transaction number — affects ANN / COR / NDC.
+- [x] ~~`numeroTransactionOriginal` sent our internal UUID~~ → now the original's MEV number (same-operator lookup).
 - [x] ~~`POST /operators/register` returns 401~~ → fixed task 5
 - [x] ~~UTL/CRT send empty header~~ → fixed tasks 5–6.
 - [x] ~~`POST /operators/users` returns `passwordHash`~~ → fixed task 5
 - [x] ~~No way to re-send UTL~~ → `POST /api/operators/users/sync-mev` + `AuthService.syncMevUsers()`; auto-call after cert storage → task 6
-- [ ] **Tenant isolation:** `devices.controller` update/findById don't check the device belongs to `req.user.operatorId`.
+- [x] ~~Tenant isolation on devices~~ → `DevicesService.assertOwned()` on get/update/offline-status/flush; sales require device + user of the caller's operator.

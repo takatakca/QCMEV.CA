@@ -26,26 +26,30 @@ export class DevicesController {
 
   /** Get device by ID */
   @Get(':id')
-  async findOne(@Param('id') id: string) {
+  async findOne(@Request() req: any, @Param('id') id: string) {
+    await this.devicesService.assertOwned(req.user.operatorId, id);
     return this.devicesService.findById(id);
   }
 
   /** Update device info */
   @Put(':id')
-  async update(@Param('id') id: string, @Body() dto: any) {
+  async update(@Request() req: any, @Param('id') id: string, @Body() dto: any) {
+    await this.devicesService.assertOwned(req.user.operatorId, id);
     return this.devicesService.update(id, dto);
   }
 
   /** Get offline/queue status for a device */
   @Get(':id/offline-status')
-  async offlineStatus(@Param('id') id: string) {
+  async offlineStatus(@Request() req: any, @Param('id') id: string) {
+    await this.devicesService.assertOwned(req.user.operatorId, id);
     return this.devicesService.getOfflineStatus(id);
   }
 
   /** Manually trigger an offline queue flush */
   @Post(':id/flush-queue')
   @HttpCode(HttpStatus.OK)
-  async flushQueue(@Param('id') id: string) {
+  async flushQueue(@Request() req: any, @Param('id') id: string) {
+    await this.devicesService.assertOwned(req.user.operatorId, id);
     return this.offlineQueueService.flushDeviceQueue(id);
   }
 }

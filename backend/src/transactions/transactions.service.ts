@@ -111,12 +111,26 @@ export class TransactionsService {
     const operator = await this.prisma.operator.findUnique({ where: { id: dto.operatorId } });
     if (!operator) throw new NotFoundException('Operator not found');
 
-    const device = await this.prisma.device.findUnique({ where: { id: dto.deviceId } });
+    // Tenant isolation: the device and the user must belong to the caller's operator
+    const device = await this.prisma.device.findFirst({ where: { id: dto.deviceId, operatorId: dto.operatorId } });
     if (!device) throw new NotFoundException('Device not found');
+    if (!device.isActive) throw new BadRequestException('Device is inactive');
 
-    const user = await this.prisma.sEVUser.findUnique({ where: { id: dto.userId } });
+    const user = await this.prisma.sEVUser.findFirst({ where: { id: dto.userId, operatorId: dto.operatorId } });
     if (!user) throw new NotFoundException('User not found');
     if (!user.mevUserId) throw new BadRequestException('User not registered with MEV-WEB');
+
+    // ANN / COR / NDC must reference the ORIGINAL's MEV transaction number —
+    // not our internal UUID. The original must belong to the same operator.
+    let originalMevNumber: string | undefined;
+    if (dto.relatedTransactionId) {
+      const original = await this.prisma.transaction.findFirst({
+        where: { id: dto.relatedTransactionId, operatorId: dto.operatorId },
+        select: { mevTransactionNumber: true },
+      });
+      if (!original) throw new NotFoundException('Related transaction not found');
+      originalMevNumber = original.mevTransactionNumber ?? undefined;
+    }
 
     const civilDate = this.getCivilDate();
 
@@ -188,7 +202,7 @@ export class TransactionsService {
     // If offline, enqueue for later submission (linked to the transaction so the
     // MEV number / QR code are written back when the queue is flushed)
     if (device.offlineMode) {
-      const payload = this.buildTransactionPayload(transaction, operator, user, items);
+      const payload = this.buildTransactionPayload(transaction, operator, user, items, originalMevNumber);
       await this.offlineQueueService.enqueue(dto.deviceId, MevRequestType.TRX, payload, transaction.id);
       this.logger.log(`Transaction ${transaction.id} queued offline`);
       return transaction;
@@ -196,7 +210,7 @@ export class TransactionsService {
 
     // Submit to MEV-WEB
     try {
-      const payload = this.buildTransactionPayload(transaction, operator, user, items);
+      const payload = this.buildTransactionPayload(transaction, operator, user, items, originalMevNumber);
       const response = await this.mevWebService.submitTransaction(dto.operatorId, payload);
 
       const updated = await this.prisma.transaction.update({
@@ -229,7 +243,7 @@ export class TransactionsService {
       // MEV-WEB unreachable (network / timeout / 5xx) → SW-76 §4.7 offline mode:
       // the sale is NOT lost — queue it, flag the device offline, return the transaction.
       if (isTransientMevError(err)) {
-        const payload = this.buildTransactionPayload(transaction, operator, user, items);
+        const payload = this.buildTransactionPayload(transaction, operator, user, items, originalMevNumber);
         await this.offlineQueueService.enqueue(dto.deviceId, MevRequestType.TRX, payload, transaction.id);
         await this.offlineQueueService.activateOfflineMode(
           dto.deviceId,
@@ -350,6 +364,7 @@ export class TransactionsService {
     operator: any,
     user: any,
     items: any[],
+    originalMevNumber?: string,
   ): TransactionRequestPayload {
     return {
       entete: this.mevWebService.buildHeader(operator, MevRequestTypeCode.TRX, {
@@ -384,7 +399,7 @@ export class TransactionsService {
             montantTPS:   Number(item.tpsAmount),
             montantTVQ:   Number(item.tvqAmount),
           })),
-          numeroTransactionOriginal: transaction.relatedTransactionId,
+          numeroTransactionOriginal: originalMevNumber,
         },
       },
     };

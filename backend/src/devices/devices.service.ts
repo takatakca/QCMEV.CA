@@ -46,6 +46,12 @@ export class DevicesService {
     });
   }
 
+  /** Tenant isolation: 404 unless the device belongs to this operator */
+  async assertOwned(operatorId: string, deviceId: string) {
+    const device = await this.prisma.device.findFirst({ where: { id: deviceId, operatorId }, select: { id: true } });
+    if (!device) throw new NotFoundException('Device not found');
+  }
+
   async findById(id: string) {
     return this.prisma.device.findUnique({
       where: { id },

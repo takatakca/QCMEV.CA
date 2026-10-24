@@ -46,3 +46,6 @@ coverage/
 
 # Docker volumes
 postgres-data/
+
+# TypeScript incremental build cache
+*.tsbuildinfo

@@ -47,8 +47,9 @@ export const createTransaction = (data: any) => api.post('/transactions', data);
 export const cancelTransaction = (id: string, reason?: string) =>
   api.post(`/transactions/${id}/cancel`, { reason });
 export const getReceipt = (id: string) => api.get(`/transactions/${id}/receipt`);
-export const getDailySummary = (deviceId: string, date?: string) =>
-  api.get('/transactions/daily-summary', { params: { deviceId, date } });
+// Backend is operator-scoped (from the JWT) and only takes an optional date (YYYYMMDD)
+export const getDailySummary = (date?: string) =>
+  api.get('/transactions/daily-summary', { params: { date } });
 
 // Devices
 export const listDevices = () => api.get('/devices');

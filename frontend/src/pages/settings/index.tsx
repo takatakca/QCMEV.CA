@@ -29,8 +29,15 @@ export default function SettingsPage() {
     setCertLoading(true);
     setCertMsg('');
     setError('');
+    // The CRT request is tied to a device (its key pair / CSR). Use the first active one.
+    const device = operator?.devices?.find((d: any) => d.isActive) ?? operator?.devices?.[0];
+    if (!device) {
+      setError("Ajoutez d'abord un appareil (page Appareils) avant de demander un certificat.");
+      setCertLoading(false);
+      return;
+    }
     try {
-      await requestCertificate();
+      await requestCertificate(device.id);
       setCertMsg('✅ Demande de certificat soumise avec succès. Le certificat sera actif dans quelques instants.');
       // Refresh cert
       const r = await getActiveCert();
