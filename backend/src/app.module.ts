@@ -11,6 +11,8 @@ import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ScheduleModule } from '@nestjs/schedule';
 import { HttpModule } from '@nestjs/axios';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
 
 // Core
 import { PrismaService } from './prisma/prisma.service';
@@ -61,6 +63,18 @@ import { ReportsController } from './reports/reports.controller';
     ScheduleModule.forRoot(),
     HttpModule,
     PassportModule,
+    ThrottlerModule.forRoot([
+      {
+        name:  'short',
+        ttl:   1_000,   // 1 s
+        limit: 10,      // max 10 requests/s per IP
+      },
+      {
+        name:  'medium',
+        ttl:   60_000,  // 1 min
+        limit: 100,     // max 100 requests/min per IP
+      },
+    ]),
     JwtModule.register({
       secret:      process.env.JWT_SECRET ?? 'takatak-mev-dev-secret-CHANGE-IN-PROD',
       signOptions: { expiresIn: process.env.JWT_EXPIRES_IN ?? '8h' },
@@ -76,6 +90,8 @@ import { ReportsController } from './reports/reports.controller';
     MevSimulatorController,
   ],
   providers: [
+    // Global rate-limit guard (applies to every route)
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
     PrismaService,
     AuditLogService,
     AuthService,
