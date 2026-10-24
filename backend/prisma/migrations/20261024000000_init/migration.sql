@@ -116,6 +116,7 @@ CREATE TABLE "SEVUser" (
 CREATE TABLE "Certificate" (
     "id" TEXT NOT NULL,
     "operatorId" TEXT NOT NULL,
+    "deviceId" TEXT,
     "type" "CertificateType" NOT NULL,
     "serialNumber" TEXT,
     "subject" TEXT,
@@ -308,6 +309,9 @@ CREATE INDEX "SEVUser_operatorId_idx" ON "SEVUser"("operatorId");
 
 -- CreateIndex
 CREATE INDEX "Certificate_operatorId_idx" ON "Certificate"("operatorId");
+
+-- CreateIndex
+CREATE INDEX "Certificate_isActive_validTo_idx" ON "Certificate"("isActive", "validTo");
 
 -- CreateIndex
 CREATE INDEX "Transaction_operatorId_idx" ON "Transaction"("operatorId");

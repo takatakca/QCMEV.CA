@@ -225,6 +225,7 @@ model SEVUser {
 model Certificate {
   id                  String          @id @default(uuid())
   operatorId          String
+  deviceId            String? // Device whose key pair / CSR produced this cert (used for renewal)
   type                CertificateType
   serialNumber        String? // Assigned by MEV-WEB
   subject             String?
@@ -243,6 +244,7 @@ model Certificate {
   operator Operator @relation(fields: [operatorId], references: [id])
 
   @@index([operatorId])
+  @@index([isActive, validTo])
 }
 
 model Transaction {

@@ -28,6 +28,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(payload: JwtPayload) {
     const user = await this.prisma.sEVUser.findUnique({ where: { id: payload.sub } });
     if (!user || !user.isActive) throw new UnauthorizedException('User not found or inactive');
-    return { id: payload.sub, operatorId: payload.operatorId, role: payload.role };
+    // Both `id` and `sub` exposed: transactions.controller reads req.user.sub, others read id
+    return { id: payload.sub, sub: payload.sub, operatorId: payload.operatorId, role: payload.role };
   }
 }

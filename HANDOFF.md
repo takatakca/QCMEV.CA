@@ -19,7 +19,7 @@
 | 3 | Runtime validation of TRX payloads (replaces `as unknown as` cast) | `mev-web/payload-validator.ts` (new), `mev-web.service.ts` | ✅ done |
 | 4 | Migration renamed/regenerated + Docker fixes (see log) | `prisma/migrations/*`, both Dockerfiles, both compose files | ✅ done |
 | 5 | Operator registration flow (public register, UTL headers, MEV user sync) | `operators/*`, `auth.service.ts`, `mev-web.service.ts`, `mev-time.ts` | ✅ done (tested live) |
-| 6 | Certificate renewal cron (auto-renew before `validTo`) | `backend/src/certificates/*`, `backend/src/app.module.ts` | ⏳ pending |
+| 6 | Certificate lifecycle + nightly renewal job | `certificates/certificate-lifecycle.service.ts` (new), `certificates.*`, simulator | ✅ done (tested live) |
 | 7 | Full build verification (backend + frontend) | — | ⏳ pending |
 
 ### Blocked on outside parties (cannot be done in code)
@@ -66,11 +66,21 @@
   - Live results: invalid body → 400 with messages; register → 201; dup NEQ → 409; login OK; cashier → mevUserId from simulator, no hash; device with model/firmware; sync-mev registers admin, 2nd call no-op.
   - Note: register is public by design (first-time setup). Consider gating it in PRODUCTION (invite code / env flag) — product decision for Takatak.
 
+- 2026-10-24 — Task 6 done, **full SEV lifecycle tested live** (Postgres 16 + simulator).
+  - New `CertificateLifecycleService`: `requestCertificate(operatorId, deviceId)` → CSR → CRT (real header; NEQ/auth code/sector from the Operator record, not the body) → store → audit `CERTIFICATE_REQUESTED/RECEIVED` → `syncMevUsers()` automatically.
+  - Nightly job `renewExpiringCertificates()` at 03:00 America/Toronto; window `CERT_RENEWAL_DAYS` (default 30); renews on the same device (`Certificate.deviceId`, new column); one failure doesn't block others; failures audited (CRITICAL if already expired); re-entrancy guard.
+  - Endpoints: `POST /api/certificates/request {deviceId}`, new `POST /api/certificates/renew`; `GET /api/certificates/expiring` now scoped to the caller's operator (**was leaking every operator's certs**).
+  - **Finding/fix (crash):** CSR generation used `{shortName:'serialNumber'}` → forge throws inside the keygen callback → uncaught → **the whole API process died** on every certificate request. Fixed attribute + try/catch → reject.
+  - **Finding/fix:** simulator returned a fake non-X.509 PEM → storing it always failed. Simulator now signs a real X.509 from the CSR with an in-memory CA; validity `SIMULATOR_CERT_VALIDITY_DAYS` (default 365, set 10 to test renewal).
+  - **Finding/fix:** JWT strategy returned `{id}` but `transactions.controller` reads `req.user.sub` (5 places) → **every sale/cancel/correction via the API failed (500)**. Strategy now returns both.
+  - Init migration regenerated again (Certificate.deviceId + index) and re-verified: deploy OK, zero drift.
+  - Live run: register → login → device → certificate (admin auto-synced) → renew → online sale ACCEPTED (`SIM-20261024-000001`) → operator env set to unreachable → 2 sales `QUEUED_OFFLINE`, device offline → back to simulator → flush `{submitted:2, remaining:0}` → all 3 `INVOICED/ACCEPTED` → device online. Audit: OFFLINE_MODE_ACTIVATED → BATCH_SUBMITTED → OFFLINE_MODE_DEACTIVATED. Nightly job run directly → renewed.
+
 ### Findings to fix next (found while reading, not yet done)
 - [x] ~~Civil date uses UTC~~ → fixed in task 5 (`mev-web/mev-time.ts`, `America/Toronto`).
 - [ ] **`numeroTransactionOriginal` sends our internal UUID** (`relatedTransactionId`) instead of the original's MEV transaction number — affects ANN / COR / NDC.
 - [x] ~~`POST /operators/register` returns 401~~ → fixed task 5
-- [x] ~~UTL sends empty header~~ → fixed task 5. CRT part → task 6.
+- [x] ~~UTL/CRT send empty header~~ → fixed tasks 5–6.
 - [x] ~~`POST /operators/users` returns `passwordHash`~~ → fixed task 5
 - [x] ~~No way to re-send UTL~~ → `POST /api/operators/users/sync-mev` + `AuthService.syncMevUsers()`; auto-call after cert storage → task 6
 - [ ] **Tenant isolation:** `devices.controller` update/findById don't check the device belongs to `req.user.operatorId`.

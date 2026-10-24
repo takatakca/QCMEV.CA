@@ -8,14 +8,14 @@
 import { Controller, Get, Post, Body, UseGuards, Request, HttpCode, HttpStatus } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CertificatesService } from './certificates.service';
-import { MevWebService } from '../mev-web/mev-web.service';
+import { CertificateLifecycleService } from './certificate-lifecycle.service';
 
 @Controller('certificates')
 @UseGuards(JwtAuthGuard)
 export class CertificatesController {
   constructor(
     private readonly certificatesService: CertificatesService,
-    private readonly mevWebService: MevWebService,
+    private readonly lifecycle: CertificateLifecycleService,
   ) {}
 
   /** Get active certificate for the operator */
@@ -33,39 +33,33 @@ export class CertificatesController {
     };
   }
 
-  /** List expiring certificates (within 30 days) */
+  /** This operator's certificates expiring within the renewal window (was: every operator's — tenant leak) */
   @Get('expiring')
   async getExpiring(@Request() req: any) {
-    return this.certificatesService.getExpiringCertificates(30);
+    return this.certificatesService.getExpiringCertificates(
+      this.lifecycle.renewalWindowDays,
+      req.user.operatorId,
+    );
   }
 
-  /** Generate a new key pair + CSR, then submit CRT request to MEV-WEB */
+  /**
+   * Generate a new key pair + CSR for a device, submit the CRT request to
+   * MEV-WEB, store the certificate, then (re)send UTL for pending users.
+   * Body: { deviceId }. NEQ / authorization code / sector come from the operator record.
+   */
   @Post('request')
   @HttpCode(HttpStatus.CREATED)
-  async requestCertificate(@Request() req: any, @Body() body: any) {
-    const { csrPem, encryptedPrivateKey } = await this.certificatesService.generateKeyPairAndCSR(
-      req.user.operatorId,
-      body.deviceId,
-    );
+  async requestCertificate(@Request() req: any, @Body() body: { deviceId: string }) {
+    const result = await this.lifecycle.requestCertificate(req.user.operatorId, body?.deviceId, 'MANUAL');
+    return { message: 'Certificate issued successfully', ...result };
+  }
 
-    const response = await this.mevWebService.submitCertificateRequest(req.user.operatorId, {
-      entete: {} as any,
-      corps: {
-        neq:              body.neq ?? '',
-        codeAutorisation: body.codeAutorisation ?? '',
-        secteur:          body.secteur ?? 'R',
-        csrPem,
-      },
-    });
-
-    await this.certificatesService.storeMevWebCertificate(
-      req.user.operatorId,
-      response.certificatPem,
-      encryptedPrivateKey,
-      response.identifiantCle,
-    );
-
-    return { message: 'Certificate issued successfully', identifiantCle: response.identifiantCle };
+  /** Renew this operator's certificate now (same as the nightly job, for one operator) */
+  @Post('renew')
+  @HttpCode(HttpStatus.CREATED)
+  async renew(@Request() req: any) {
+    const result = await this.lifecycle.renewForOperator(req.user.operatorId);
+    return { message: 'Certificate renewed', ...result };
   }
 
   /** Revoke the active certificate */

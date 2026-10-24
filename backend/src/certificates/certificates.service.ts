@@ -53,6 +53,9 @@ export class CertificatesService {
     return new Promise((resolve, reject) => {
       forge.pki.rsa.generateKeyPair({ bits: 2048, workers: -1 }, (err, keypair) => {
         if (err) return reject(err);
+        // Everything below runs in a callback: an uncaught throw here would kill
+        // the whole Node process, so every error is routed to reject().
+        try {
 
         // Build CSR
         const csr = forge.pki.createCertificationRequest();
@@ -65,7 +68,7 @@ export class CertificatesService {
           { name: 'countryName',        value: 'CA' },
           { name: 'stateOrProvinceName', value: 'QC' },
           { name: 'localityName',       value: operator.city ?? 'Québec' },
-          { shortName: 'serialNumber',  value: device.id },
+          { name: 'serialNumber',       value: device.id }, // OID 2.5.4.5 (forge has no shortName for it)
         ]);
 
         // SAN extension with device UUID
@@ -82,6 +85,9 @@ export class CertificatesService {
         const encryptedPrivateKey = this.encryptPrivateKey(forge.pki.privateKeyToPem(keypair.privateKey));
 
         resolve({ csrPem, encryptedPrivateKey });
+        } catch (e) {
+          reject(e);
+        }
       });
     });
   }
@@ -93,7 +99,8 @@ export class CertificatesService {
     certPem: string,
     encryptedPrivateKey: string,
     mevKeyId: string,
-  ): Promise<void> {
+    deviceId?: string,
+  ): Promise<{ id: string; validTo: Date }> {
     const cert = forge.pki.certificateFromPem(certPem);
 
     // Deactivate old certificates
@@ -102,9 +109,10 @@ export class CertificatesService {
       data: { isActive: false },
     });
 
-    await this.prisma.certificate.create({
+    const created = await this.prisma.certificate.create({
       data: {
         operatorId,
+        deviceId,
         type: CertificateType.OPERATOR,
         serialNumber: cert.serialNumber,
         subject: cert.subject.getField('CN')?.value ?? '',
@@ -121,6 +129,7 @@ export class CertificatesService {
     // Warm the cache
     certCache.delete(operatorId);
     this.logger.log(`Certificate stored for operator ${operatorId} (expires ${cert.validity.notAfter})`);
+    return { id: created.id, validTo: cert.validity.notAfter };
   }
 
   /** Return the raw DB certificate record (for controller serialisation). */
@@ -253,12 +262,24 @@ export class CertificatesService {
 
   // ─── Certificate Lifecycle ────────────────────────────────────────────────
 
-  async getExpiringCertificates(daysBeforeExpiry = 30): Promise<Array<{ operatorId: string; validTo: Date }>> {
-    const threshold = new Date();
-    threshold.setDate(threshold.getDate() + daysBeforeExpiry);
+  /**
+   * Active, non-revoked certificates whose validTo falls within the window.
+   * Pass operatorId to scope to one tenant (API); omit only in the system cron.
+   */
+  async getExpiringCertificates(
+    daysBeforeExpiry = 30,
+    operatorId?: string,
+  ): Promise<Array<{ id: string; operatorId: string; deviceId: string | null; validTo: Date | null }>> {
+    const threshold = new Date(Date.now() + daysBeforeExpiry * 86400_000);
     return this.prisma.certificate.findMany({
-      where: { isActive: true, validTo: { lte: threshold } },
-      select: { operatorId: true, validTo: true },
+      where: {
+        isActive:  true,
+        revokedAt: null,
+        validTo:   { not: null, lte: threshold },
+        ...(operatorId ? { operatorId } : {}),
+      },
+      select: { id: true, operatorId: true, deviceId: true, validTo: true },
+      orderBy: { validTo: 'asc' },
     });
   }
 

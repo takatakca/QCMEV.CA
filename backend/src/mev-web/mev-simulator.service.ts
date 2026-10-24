@@ -9,6 +9,7 @@
 import { Controller, Get, Post, Body, HttpCode, HttpStatus, Logger } from '@nestjs/common';
 import { Injectable } from '@nestjs/common';
 import * as crypto from 'crypto';
+import * as forge from 'node-forge';
 import {
   CertificateRequestPayload,
   CertificateResponse,
@@ -33,9 +34,9 @@ export class MevSimulatorService {
     this.logger.log(`[SIM] CRT request from NEQ ${payload.corps.neq}`);
     const serial = `SIM-CERT-${Date.now()}`;
     return {
-      codeRetour: '0',
-      messageFr: 'Succès',
-      certificatPem: this.generateFakeCertificate(payload.corps.neq, serial),
+      codeRetour:     '0',
+      messageFr:      'Certificat émis (simulateur)',
+      certificatPem:  this.issueCertificateFromCsr(payload.corps.csrPem, serial),
       identifiantCle: `KEY-${serial}`,
     };
   }
@@ -118,9 +119,46 @@ export class MevSimulatorService {
     return null;
   }
 
-  private generateFakeCertificate(neq: string, serial: string): string {
-    const b64 = Buffer.from(`FAKE-CERT|${neq}|${serial}|${Date.now()}`).toString('base64');
-    return `-----BEGIN CERTIFICATE-----\n${b64}\n-----END CERTIFICATE-----`;
+  // ─── Simulator CA ─────────────────────────────────────────────────────────
+  // Issues REAL X.509 certificates (signed by an in-memory simulator CA) from
+  // the operator's CSR, so the full CRT → store → sign → renew flow can be
+  // exercised locally. Validity: SIMULATOR_CERT_VALIDITY_DAYS (default 365) —
+  // set it low (e.g. 10) to test the automatic renewal job.
+  private simCa?: { cert: forge.pki.Certificate; key: forge.pki.rsa.PrivateKey };
+
+  private getSimulatorCa() {
+    if (this.simCa) return this.simCa;
+    const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const key = forge.pki.privateKeyFromPem(privateKey.export({ type: 'pkcs1', format: 'pem' }).toString());
+    const cert = forge.pki.createCertificate();
+    cert.publicKey = forge.pki.publicKeyFromPem(publicKey.export({ type: 'spki', format: 'pem' }).toString());
+    cert.serialNumber = '01';
+    cert.validity.notBefore = new Date();
+    cert.validity.notAfter = new Date(Date.now() + 10 * 365 * 86400_000);
+    const attrs = [{ name: 'commonName', value: 'MEV-WEB Simulateur CA (Takatak)' }, { name: 'countryName', value: 'CA' }];
+    cert.setSubject(attrs);
+    cert.setIssuer(attrs);
+    cert.setExtensions([{ name: 'basicConstraints', cA: true }]);
+    cert.sign(key, forge.md.sha256.create());
+    this.simCa = { cert, key };
+    return this.simCa;
+  }
+
+  private issueCertificateFromCsr(csrPem: string, serial: string): string {
+    const csr = forge.pki.certificationRequestFromPem(csrPem);
+    if (!csr.verify()) throw new Error('CSR signature invalid');
+    const ca = this.getSimulatorCa();
+    const days = Number(process.env.SIMULATOR_CERT_VALIDITY_DAYS ?? 365);
+
+    const cert = forge.pki.createCertificate();
+    cert.publicKey = csr.publicKey as forge.pki.rsa.PublicKey;
+    cert.serialNumber = Buffer.from(serial).toString('hex').slice(0, 30);
+    cert.validity.notBefore = new Date();
+    cert.validity.notAfter = new Date(Date.now() + days * 86400_000);
+    cert.setSubject(csr.subject.attributes);
+    cert.setIssuer(ca.cert.subject.attributes);
+    cert.sign(ca.key, forge.md.sha256.create());
+    return forge.pki.certificateToPem(cert);
   }
 }
 

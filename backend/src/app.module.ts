@@ -31,6 +31,7 @@ import { MevSimulatorController } from './mev-web/mev-simulator.service';
 // Certificates
 import { CertificatesService } from './certificates/certificates.service';
 import { CertificatesController } from './certificates/certificates.controller';
+import { CertificateLifecycleService } from './certificates/certificate-lifecycle.service';
 
 // Transactions
 import { TransactionsService } from './transactions/transactions.service';
@@ -82,6 +83,7 @@ import { ReportsController } from './reports/reports.controller';
     MevWebService,
     MevSimulatorService,
     CertificatesService,
+    CertificateLifecycleService,
     TransactionsService,
     ReceiptService,
     OperatorsService,
