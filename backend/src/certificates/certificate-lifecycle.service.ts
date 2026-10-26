@@ -1,196 +1,124 @@
 /**
- * Certificate Lifecycle Service
+ * Certificate lifecycle, end to end, on the official layer:
+ *   CRT (AJO for a device's first certificate, REM to replace a current one) → both certificates stored →
+ *   every SEV user registered again on that device (UTL AJO), so the device can sign at once.
  *
- * Orchestrates the MEV-WEB CRT flow (SW-76 §3) end to end:
- *   key pair + CSR → CRT request (signed, real header) → store certificate
- *   → (re)send UTL for users still missing a MEV user id.
+ * Nightly renewal (03:00 America/Montreal): every active SEV certificate expiring within CERT_RENEWAL_DAYS (default 30)
+ * is renewed on its own device with CRT REM, signed with the certificate being replaced, so renewal never leaves the
+ * device without a working certificate and the device keeps its IDAPPRL and signature chain. One failure never blocks
+ * the others; each failure is audited (CRITICAL when the certificate has already expired) and retried the next night.
  *
- * Also runs the automatic renewal job: every night (Québec time) any active
- * certificate expiring within CERT_RENEWAL_DAYS (default 30) is renewed using
- * the same device. While the old certificate is still valid it signs the CRT
- * request, so renewal never leaves the operator without a working certificate.
- *
- * Lives outside CertificatesService because MevWebService already depends on
- * CertificatesService (signing) — putting this there would be circular.
+ * SPEC: the renewal call (REM + noSerie) and how long before expiry Revenu Québec accepts it wait for SW-73.
  */
-
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { AuditEventType, LogSeverity } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
-import { CertificatesService } from './certificates.service';
-import { MevWebService } from '../mev-web/mev-web.service';
-import { AuthService } from '../auth/auth.service';
+import { APP_CONFIG, AppConfig } from '../config/app-config';
+import { safeErrorMessage } from '../common/redact';
+import { TIME_ZONE } from '../common/time';
 import { AuditLogService } from '../logging/audit-log.service';
-import { MevRequestTypeCode, SectorCode } from '../mev-web/dto/mev-web.dto';
-import { MEV_TIMEZONE } from '../mev-web/mev-time';
+import { OperatorsService } from '../operators/operators';
+import { PrismaService } from '../prisma/prisma.service';
+import { CertificateIssued, CertificatesService } from './certificates.service';
 
-export interface CertificateRequestResult {
-  certificateId:  string;
-  identifiantCle: string;
-  validTo:        Date;
-  deviceId:       string;
-  mevUsersSync:   { registered: string[]; failed: string[] };
+export type CertificateReason = 'MANUAL' | 'RENEWAL';
+
+export interface CertificateRequestResult extends CertificateIssued {
+  reason: CertificateReason;
+  usersRegistered: number;
+  usersFailed: number;
+}
+
+export interface RenewalRun {
+  renewed: Array<{ operatorId: string; deviceId: string; validUntil: Date }>;
+  failed: Array<{ operatorId: string; deviceId: string; error: string }>;
 }
 
 @Injectable()
 export class CertificateLifecycleService {
-  private readonly logger = new Logger(CertificateLifecycleService.name);
+  private readonly logger = new Logger('CertificateLifecycle');
   private renewalRunning = false;
 
   constructor(
+    @Inject(APP_CONFIG) private readonly cfg: AppConfig,
     private readonly prisma: PrismaService,
-    private readonly certificatesService: CertificatesService,
-    private readonly mevWebService: MevWebService,
-    private readonly authService: AuthService,
-    private readonly auditLog: AuditLogService,
+    private readonly certificates: CertificatesService,
+    private readonly operators: OperatorsService,
+    private readonly audit: AuditLogService,
   ) {}
 
-  /** Days before validTo at which renewal starts (env CERT_RENEWAL_DAYS, default 30) */
   get renewalWindowDays(): number {
-    const n = Number(process.env.CERT_RENEWAL_DAYS ?? 30);
-    return Number.isFinite(n) && n > 0 ? n : 30;
+    return this.cfg.certRenewalDays;
   }
 
   /**
-   * Request (or renew) the operator certificate for one of its devices.
-   * NEQ, authorization code and sector always come from the Operator record —
-   * never from the client request body.
+   * Certificate for one device of the operator: AJO when it has none, REM when it already has an active one.
+   * Identity values (NEQ, tax numbers, file number, authorization code) always come from the database, never from a body.
    */
-  async requestCertificate(
-    operatorId: string,
-    deviceId: string,
-    reason: 'INITIAL' | 'RENEWAL' | 'MANUAL' = 'MANUAL',
-  ): Promise<CertificateRequestResult> {
-    if (!deviceId) throw new BadRequestException('deviceId is required');
-
-    const operator = await this.prisma.operator.findUnique({ where: { id: operatorId } });
-    if (!operator) throw new NotFoundException('Operator not found');
-
-    const device = await this.prisma.device.findFirst({ where: { id: deviceId, operatorId } });
-    if (!device) throw new NotFoundException('Device not found for this operator');
-    if (!device.isActive) throw new BadRequestException('Device is inactive');
-
-    await this.auditLog.log({
-      operatorId,
-      eventType:   AuditEventType.CERTIFICATE_REQUESTED,
-      severity:    LogSeverity.INFO,
-      deviceId,
-      entityType:  'Certificate',
-      description: `Demande de certificat (${reason}) pour l'appareil ${device.serialNumber}`,
-    });
-
-    const { csrPem, encryptedPrivateKey } =
-      await this.certificatesService.generateKeyPairAndCSR(operatorId, deviceId);
-
-    const response = await this.mevWebService.submitCertificateRequest(operatorId, {
-      entete: this.mevWebService.buildHeader(operator, MevRequestTypeCode.CRT, {
-        numeroAppareil: device.id,
-      }),
-      corps: {
-        neq:              operator.neq,
-        codeAutorisation: operator.authorizationCode ?? '',
-        secteur:          operator.sector as unknown as SectorCode,
-        csrPem,
-      },
-    });
-
-    if (!response?.certificatPem || !response?.identifiantCle) {
-      throw new Error(`MEV-WEB CRT response incomplete (codeRetour ${response?.codeRetour ?? '?'})`);
-    }
-
-    const stored = await this.certificatesService.storeMevWebCertificate(
-      operatorId,
-      response.certificatPem,
-      encryptedPrivateKey,
-      response.identifiantCle,
-      deviceId,
-    );
-
-    await this.auditLog.log({
-      operatorId,
-      eventType:   AuditEventType.CERTIFICATE_RECEIVED,
-      severity:    LogSeverity.INFO,
-      deviceId,
-      entityId:    stored.id,
-      entityType:  'Certificate',
-      description: `Certificat reçu (${reason}) — clé ${response.identifiantCle}, valide jusqu'au ${stored.validTo.toISOString().slice(0, 10)}`,
-      metadata:    { identifiantCle: response.identifiantCle, validTo: stored.validTo.toISOString(), reason },
-    });
-
-    // Users created before the certificate existed (e.g. the first admin) get their UTL now
-    const mevUsersSync = await this.authService.syncMevUsers(operatorId);
-
+  async requestCertificate(operatorId: string, deviceId: string, reason: CertificateReason = 'MANUAL', nickname?: string): Promise<CertificateRequestResult> {
+    const device = await this.prisma.device.findFirst({ where: { id: deviceId, operatorId }, select: { id: true } });
+    if (!device) throw new NotFoundException('Device not found');
+    const renew = await this.certificates.hasActiveCertificate(deviceId);
+    const issued = renew
+      ? await this.certificates.renewCertificate(operatorId, deviceId, nickname)
+      : await this.certificates.requestCertificate(operatorId, deviceId, nickname);
+    // Users created before the certificate existed (e.g. the first admin) are registered now.
+    const users = await this.operators.syncUsersToDevice(operatorId, deviceId);
     return {
-      certificateId:  stored.id,
-      identifiantCle: response.identifiantCle,
-      validTo:        stored.validTo,
-      deviceId,
-      mevUsersSync,
+      ...issued,
+      reason,
+      usersRegistered: users.filter((u) => u.ok).length,
+      usersFailed: users.filter((u) => !u.ok).length,
     };
   }
 
-  /** Renew one operator's active certificate on the same device (fallback: first active device). */
-  async renewForOperator(operatorId: string): Promise<CertificateRequestResult> {
-    const current = await this.certificatesService.getActiveCertRecord(operatorId);
-    let deviceId = current?.deviceId ?? null;
-    if (!deviceId) {
-      const device = await this.prisma.device.findFirst({
-        where:   { operatorId, isActive: true },
-        orderBy: { createdAt: 'asc' },
-      });
-      deviceId = device?.id ?? null;
-    }
-    if (!deviceId) throw new BadRequestException('No active device to renew the certificate with');
-    return this.requestCertificate(operatorId, deviceId, 'RENEWAL');
+  /** Renews now (REM) the given device, or every certified device of the operator. */
+  async renewForOperator(operatorId: string, deviceId?: string): Promise<RenewalRun> {
+    const certs = await this.certificates.activeForOperator(operatorId);
+    const targets = certs.filter((c) => c.deviceId && (!deviceId || c.deviceId === deviceId));
+    if (deviceId && !targets.length) throw new NotFoundException('No active certificate on this device');
+    return this.renewAll(targets.map((c) => ({ operatorId, deviceId: c.deviceId as string, validUntil: c.validUntil })));
   }
 
-  /**
-   * Nightly renewal job (03:00 Québec time). Renews every active certificate
-   * expiring within the renewal window. One failure never blocks the others;
-   * each failure is audited and retried the next night.
-   */
-  @Cron(CronExpression.EVERY_DAY_AT_3AM, { name: 'certificate-renewal', timeZone: MEV_TIMEZONE })
-  async renewExpiringCertificates(): Promise<{ renewed: string[]; failed: Array<{ operatorId: string; error: string }> }> {
-    const renewed: string[] = [];
-    const failed: Array<{ operatorId: string; error: string }> = [];
+  /** Nightly job. Also callable directly (tests, manual run). */
+  @Cron('0 3 * * *', { name: 'certificate-renewal', timeZone: TIME_ZONE })
+  async renewExpiringCertificates(): Promise<RenewalRun> {
     if (this.renewalRunning) {
-      this.logger.warn('Certificate renewal already running — skipped');
-      return { renewed, failed };
+      this.logger.warn('certificate renewal already running: skipped');
+      return { renewed: [], failed: [] };
     }
     this.renewalRunning = true;
-
     try {
-      const expiring = await this.certificatesService.getExpiringCertificates(this.renewalWindowDays);
-      const operatorIds = [...new Set(expiring.map(c => c.operatorId))];
-      if (operatorIds.length) {
-        this.logger.log(`Certificate renewal: ${operatorIds.length} operator(s) within ${this.renewalWindowDays} days of expiry`);
-      }
-
-      for (const operatorId of operatorIds) {
-        const cert = expiring.find(c => c.operatorId === operatorId);
-        const expired = !!cert?.validTo && cert.validTo.getTime() <= Date.now();
-        try {
-          await this.renewForOperator(operatorId);
-          renewed.push(operatorId);
-        } catch (err) {
-          const error = err instanceof Error ? err.message : String(err);
-          failed.push({ operatorId, error });
-          this.logger.error(`Certificate renewal failed for operator ${operatorId}: ${error}`);
-          await this.auditLog.log({
-            operatorId,
-            eventType:   AuditEventType.MEV_SUBMISSION_FAILED,
-            severity:    expired ? LogSeverity.CRITICAL : LogSeverity.ERROR,
-            entityId:    cert?.id,
-            entityType:  'Certificate',
-            description: `Renouvellement du certificat échoué${expired ? ' — CERTIFICAT EXPIRÉ' : ''}: ${error}`,
-            metadata:    { validTo: cert?.validTo?.toISOString() ?? null, error },
-          });
-        }
-      }
+      const expiring = await this.certificates.expiring(null, this.renewalWindowDays);
+      if (expiring.length) this.logger.log(`certificate renewal: ${expiring.length} certificate(s) within ${this.renewalWindowDays} days of expiry`);
+      return await this.renewAll(expiring.map((c) => ({ operatorId: c.operatorId, deviceId: c.deviceId as string, validUntil: c.validUntil })));
     } finally {
       this.renewalRunning = false;
     }
-    return { renewed, failed };
+  }
+
+  private async renewAll(targets: Array<{ operatorId: string; deviceId: string; validUntil: Date | null }>): Promise<RenewalRun> {
+    const run: RenewalRun = { renewed: [], failed: [] };
+    for (const t of targets) {
+      const expired = !!t.validUntil && t.validUntil.getTime() <= Date.now();
+      try {
+        const r = await this.requestCertificate(t.operatorId, t.deviceId, 'RENEWAL');
+        run.renewed.push({ operatorId: t.operatorId, deviceId: t.deviceId, validUntil: r.validUntil });
+      } catch (e) {
+        const error = safeErrorMessage(e);
+        run.failed.push({ operatorId: t.operatorId, deviceId: t.deviceId, error });
+        this.logger.error(`certificate renewal failed for device ${t.deviceId}: ${error}`);
+        await this.audit.log({
+          operatorId: t.operatorId,
+          eventType: AuditEventType.MEV_ERROR,
+          severity: expired ? LogSeverity.CRITICAL : LogSeverity.ERROR,
+          deviceId: t.deviceId,
+          entityType: 'Certificate',
+          description: `certificate renewal (CRT REM) failed${expired ? ': CERTIFICATE EXPIRED' : ''}: ${error}`,
+          metadata: { validUntil: t.validUntil?.toISOString() ?? null },
+        });
+      }
+    }
+    return run;
   }
 }

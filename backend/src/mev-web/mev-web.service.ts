@@ -1,412 +1,253 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+/**
+ * WEB-SRM (MEV-WEB) client. The environment (SIMULATOR / DEV / ESSAI / PROD) comes from MEV_ENVIRONMENT
+ * and decides the endpoint; nothing else can switch it.
+ *
+ * - Every request and answer is written to MevRequestLog after redaction (no authorization code, tax numbers,
+ *   CSR, certificate or key ever reaches the log).
+ * - The request body is ASCII text (SW-76 §4.2): accents are sent as JSON \uXXXX escapes (common/ascii-json.ts), and
+ *   SIGNATRANSM signs exactly those bytes.
+ * - A network failure, a timeout, a 5xx, a 408 / 429 ("try again later") or a 2xx that is not a MEV-WEB answer (no
+ *   retour* envelope, e.g. a proxy page) raises MevUnreachableError: the caller switches to offline mode. It is never
+ *   stored as a rejection, and never as an acceptance.
+ * - Any other 4xx is a rejection (core-line rule, HANDOFF task 1). Only the error lists the callers read count: the
+ *   retour* envelope's own listErr and, for TRX, the listErr of each retourTransActu / retourTransLot item
+ *   (readableErrors). When a 4xx has none there (a gateway 401 / 403, a 404 from a wrong MEV_PATH_*, an HTML error
+ *   page, or a listErr outside the envelope such as a top-level {listErr} or {erreur: {listErr}}), an error
+ *   {codRetour "HTTP"} is put in the envelope; and in a 4xx batch answer, a transaction left without an error of its
+ *   own gets it too. So the transaction is REJECTED (queue FAILED, audit), a user is never marked registered and a
+ *   document is never ACCEPTED. A 4xx is never "accepted".
+ */
 import { HttpService } from '@nestjs/axios';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { MevRequestType, Prisma } from '@prisma/client';
+import type { KeyObject } from 'crypto';
 import { firstValueFrom } from 'rxjs';
-import * as crypto from 'crypto';
+import { APP_CONFIG, AppConfig } from '../config/app-config';
+import { toAsciiJson } from '../common/ascii-json';
+import { redact, safeErrorMessage } from '../common/redact';
+import { signP256 } from '../crypto/ecdsa';
 import { PrismaService } from '../prisma/prisma.service';
-import { CertificatesService } from '../certificates/certificates.service';
-import { AuditLogService } from '../logging/audit-log.service';
 import {
-  MevRequestTypeCode,
-  CertificateRequestPayload,
-  CertificateResponse,
-  UserRequestPayload,
-  UserRequestResponse,
-  TransactionRequestPayload,
-  TransactionResponse,
-  DocumentRequestPayload,
-  DocumentResponse,
-  MevWebError,
-  MEV_ERROR_CODES,
-  isTransientMevError,
-} from './dto/mev-web.dto';
-import { assertTransactionPayload } from './payload-validator';
-import { MevWebHeader } from './dto/mev-web.dto';
-import { quebecCivilDate, quebecTime } from './mev-time';
-import {
-  Operator,
-  MevEnvironment,
-  MevRequestType,
-  AuditEventType,
-  LogSeverity,
-  MevStatus,
-  QueueStatus,
-  TransactionStatus,
-} from '@prisma/client';
+  MevError,
+  MevHeaders,
+  MevRequestKind,
+  Modif,
+  ReqCertif,
+  ReqDoc,
+  ReqTrans,
+  ReqUtil,
+  RetourCertif,
+  RetourDoc,
+  RetourTrans,
+  RetourTransItem,
+  RetourUtil,
+  TransActu,
+} from './mev-web.types';
 
-// MEV-WEB endpoint URLs
-const MEV_URLS: Record<MevEnvironment, string> = {
-  // The simulator is a controller inside this same backend (MevSimulatorController)
-  SIMULATOR:   process.env.SIMULATOR_URL || `http://localhost:${process.env.PORT ?? 3001}/api/mev-simulator`,
-  DEVELOPMENT: 'https://mev-web-dev.revenuquebec.ca/mev-web/v1',
-  TESTING:     'https://mev-web-tst.revenuquebec.ca/mev-web/v1',
-  PRODUCTION:  'https://mev-web.revenuquebec.ca/mev-web/v1',
+export class MevUnreachableError extends Error {
+  constructor(message: string, public readonly httpStatus?: number) {
+    super(message);
+    this.name = 'MevUnreachableError';
+  }
+}
+
+/** The answer envelope of each request kind (S1 names). */
+export const ANSWER_ENVELOPE: Record<MevRequestKind, 'retourCertif' | 'retourUtil' | 'retourTrans' | 'retourDoc'> = {
+  CRT: 'retourCertif',
+  UTL: 'retourUtil',
+  TRX: 'retourTrans',
+  DOC: 'retourDoc',
 };
 
-const MEV_ENDPOINTS = {
-  CRT: '/certificats',
-  UTL: '/utilisateurs',
-  TRX: '/transactions',
-  DOC: '/documents',
-};
+/** 4xx statuses that mean "try again later" (request timeout, too many requests): unreachable, never a rejection. */
+export const TRANSIENT_4XX: ReadonlySet<number> = new Set([408, 429]);
+
+/** The error put in a 4xx answer that has no listErr of its own. "HTTP" does not end in 0, 1 or 5: a rejection. */
+export function httpRejection(status: number): MevError {
+  return { id: `HTTP-${status}`, mess: `MEV-WEB answered HTTP ${status} without an error list`, codRetour: 'HTTP' };
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/** The listErr of one object of the answer, when it is a list (anything else is not an error list a caller reads). */
+const listErrOf = (v: unknown): MevError[] => (isObject(v) && Array.isArray(v.listErr) ? (v.listErr as MevError[]) : []);
+
+/**
+ * The errors of an answer exactly where the callers read them: the envelope's own listErr (CRT, UTL, DOC; the TRX
+ * global errors) and, for TRX, each item's listErr. A listErr anywhere else in the body is read by no caller, so it
+ * never counts as "this 4xx carries its errors" (it stays visible in MevRequestLog.responsePayload).
+ */
+export function readableErrors(kind: MevRequestKind, answer: unknown): MevError[] {
+  const env = isObject(answer) ? answer[ANSWER_ENVELOPE[kind]] : undefined;
+  if (!isObject(env)) return [];
+  const errors = [...listErrOf(env)];
+  if (kind === 'TRX') {
+    errors.push(...listErrOf(env.retourTransActu));
+    if (Array.isArray(env.retourTransLot)) env.retourTransLot.forEach((item) => errors.push(...listErrOf(item)));
+  }
+  return errors;
+}
+
+export interface SigningMaterial {
+  privateKey: KeyObject;
+  certPem: string;
+  thumbprint: string;
+  mevDeviceId: string;
+}
+
+export interface OperatorIdentity {
+  id: string;
+  noTPS: string;
+  noTVQ: string;
+}
 
 @Injectable()
 export class MevWebService {
-  private readonly logger = new Logger(MevWebService.name);
+  private readonly logger = new Logger('MevWeb');
+  private lastOkAt: Date | null = null;
+  private lastFailAt: Date | null = null;
 
   constructor(
+    @Inject(APP_CONFIG) private readonly cfg: AppConfig,
+    private readonly http: HttpService,
     private readonly prisma: PrismaService,
-    private readonly httpService: HttpService,
-    private readonly configService: ConfigService,
-    private readonly certificatesService: CertificatesService,
-    private readonly auditLogService: AuditLogService,
   ) {}
 
-  // ─── Header ────────────────────────────────────────────────────────────────
+  /** Reachability as seen by the last real call (there is no public health endpoint on MEV-WEB; SPEC). */
+  reachability(): { mevReachable: boolean | null; lastOkAt: Date | null; lastFailAt: Date | null } {
+    const reachable = this.lastOkAt || this.lastFailAt ? (this.lastOkAt?.getTime() ?? 0) >= (this.lastFailAt?.getTime() ?? 0) : null;
+    return { mevReachable: reachable, lastOkAt: this.lastOkAt, lastFailAt: this.lastFailAt };
+  }
 
-  /**
-   * Build the MEV-WEB request header (entete) for any request type.
-   * Single source of truth — CRT, UTL, TRX and DOC all use it, so no request
-   * ever leaves with an empty header. dateCivile / heureDebut are Québec local.
-   * The signature is filled later by signAndPrepare().
-   */
-  buildHeader(
-    operator: Pick<Operator, 'id' | 'sevCertificationCode' | 'sevVersion'>,
-    typeRequete: MevRequestTypeCode,
-    opts: { numeroAppareil?: string; typeAppareil?: string; dateCivile?: string; at?: Date } = {},
-  ): MevWebHeader {
-    const at = opts.at ?? new Date();
+  baseHeaders(): MevHeaders {
+    const s = this.cfg.sev;
     return {
-      typeRequete,
-      codeSEV:        operator.sevCertificationCode ?? 'DEV-CODE',
-      versionSEV:     operator.sevVersion,
-      typeAppareil:   opts.typeAppareil ?? 'SERVEUR',
-      numeroAppareil: opts.numeroAppareil ?? operator.id,
-      dateCivile:     opts.dateCivile ?? quebecCivilDate(at),
-      heureDebut:     quebecTime(at),
-      signature:      '',
+      ENVIRN: this.cfg.envirnHeader,
+      ...(this.cfg.mevEnvironment === 'ESSAI' ? { CASESSAI: this.cfg.casEssai } : {}),
+      // Mode SEV (SW-76 §4.1.2): QCMEV creates, numbers and signs every transaction and sends it itself. A remote
+      // server (SRV) may only forward transactions made by a SEV, with its own certificate: not what QCMEV is.
+      APPRLINIT: 'SEV',
+      IDSEV: s.idSev,
+      IDVERSI: s.idVersi,
+      CODCERTIF: s.codCertif,
+      IDPARTN: s.idPartn,
+      VERSI: s.versi,
+      VERSIPARN: s.versiParn,
     };
   }
 
-  // ─── Public Methods ────────────────────────────────────────────────────────
-
-  async submitCertificateRequest(
-    operatorId: string,
-    payload: CertificateRequestPayload,
-  ): Promise<CertificateResponse> {
-    const signed = await this.signAndPrepare(operatorId, payload);
-    return this.sendToMevWeb<CertificateResponse>(
-      operatorId,
-      MevRequestType.CRT,
-      MEV_ENDPOINTS.CRT,
-      signed,
-    );
-  }
-
-  async submitUserRequest(
-    operatorId: string,
-    payload: UserRequestPayload,
-  ): Promise<UserRequestResponse> {
-    const signed = await this.signAndPrepare(operatorId, payload);
-    return this.sendToMevWeb<UserRequestResponse>(
-      operatorId,
-      MevRequestType.UTL,
-      MEV_ENDPOINTS.UTL,
-      signed,
-    );
-  }
-
-  async submitTransaction(
-    operatorId: string,
-    payload: TransactionRequestPayload,
-  ): Promise<TransactionResponse> {
-    assertTransactionPayload(payload);
-    const signed = await this.signAndPrepare(operatorId, payload);
-    return this.sendToMevWeb<TransactionResponse>(
-      operatorId,
-      MevRequestType.TRX,
-      MEV_ENDPOINTS.TRX,
-      signed,
-    );
-  }
-
-  async submitDocument(
-    operatorId: string,
-    payload: DocumentRequestPayload,
-  ): Promise<DocumentResponse> {
-    const signed = await this.signAndPrepare(operatorId, payload);
-    return this.sendToMevWeb<DocumentResponse>(
-      operatorId,
-      MevRequestType.DOC,
-      MEV_ENDPOINTS.DOC,
-      signed,
-    );
-  }
-
   /**
-   * Re-submit queued offline transactions in chronological order (SW-76 §4.7).
-   * Called automatically when connectivity is restored.
-   *
-   * - Each payload is validated at runtime before signing (queue = untyped JSON).
-   * - Transient failure (network / 5xx): stop immediately, leave the rest PENDING,
-   *   so transactions are never sent out of order. Never marked FAILED — a fiscal
-   *   record must not be dropped because the network was down.
-   * - Business rejection (4xx) or invalid payload: item FAILED, linked transaction
-   *   REJECTED, continue with the next item.
-   * - Success: item COMPLETED and the linked Transaction gets its MEV number,
-   *   QR URL and certified data, exactly like a live submission.
+   * CRT. AJO = first certificate of a device. REM = replacement of the device's current certificate (renewal): it
+   * carries the 40-character noSerie of the certificate being replaced and is signed with that certificate's key, so
+   * the device keeps its IDAPPRL and its signature chain (SPEC: REM / noSerie names from the 2022 sample, S1; the
+   * exact renewal rules wait for SW-73).
    */
-  async submitOfflineBatch(
-    deviceId: string,
-  ): Promise<{ submitted: number; failed: number; remaining: number }> {
-    const pending = await this.prisma.offlineQueue.findMany({
-      where: { deviceId, status: QueueStatus.PENDING },
-      orderBy: { createdAt: 'asc' },
-      include: { device: true },
+  async certificateRequest(op: OperatorIdentity, authorizationCode: string, modif: Modif, csr: string, noSerie?: string, signer?: SigningMaterial): Promise<RetourCertif> {
+    const body: ReqCertif = { reqCertif: { modif, csr, ...(noSerie ? { noSerie } : {}) } };
+    const headers: MevHeaders = { ...(signer ? this.signedHeaders(signer) : this.baseHeaders()), CODAUTORI: authorizationCode, NOTPS: op.noTPS, NOTVQ: op.noTVQ };
+    return (await this.post<RetourCertif>('CRT', op.id, headers, body, signer)).data;
+  }
+
+  async userRequest(op: OperatorIdentity, m: SigningMaterial, modif: Modif, nomUtil: string): Promise<RetourUtil> {
+    const body: ReqUtil = { reqUtil: { modif, nomUtil, noTax: op.noTVQ } };
+    return (await this.post<RetourUtil>('UTL', op.id, this.signedHeaders(m), body, m)).data;
+  }
+
+  /** Sends one transaction (transActu) or a batch (transLot). Returns one result per transaction, in order. */
+  async sendTransactions(op: OperatorIdentity, m: SigningMaterial, trans: TransActu[]): Promise<RetourTransItem[]> {
+    if (!trans.length) return [];
+    const body: ReqTrans = { reqTrans: trans.length === 1 ? { transActu: trans[0] } : { transLot: trans } };
+    const { status, data } = await this.post<RetourTrans>('TRX', op.id, this.signedHeaders(m), body, m);
+    const r = data?.retourTrans ?? {};
+    const globalErrors = r.listErr ?? [];
+    const items = trans.length === 1 ? [r.retourTransActu ?? {}] : r.retourTransLot ?? [];
+    return trans.map((t, i) => {
+      const item = items.find((x) => x?.noTrans === t.noTrans) ?? items[i] ?? {};
+      const listErr = [...globalErrors, ...(item.listErr ?? [])];
+      // A 4xx is never "accepted": in a batch answer, a transaction left without an error of its own is rejected with
+      // the HTTP error, even when another transaction of the same answer carries real errors.
+      return { ...item, listErr: status >= 400 && !listErr.length ? [httpRejection(status)] : listErr };
     });
-
-    let submitted = 0;
-    let failed = 0;
-
-    for (const item of pending) {
-      const operatorId = item.device.operatorId;
-      const attempts = item.attempts + 1;
-
-      await this.prisma.offlineQueue.update({
-        where: { id: item.id },
-        data: { status: QueueStatus.PROCESSING, lastAttemptAt: new Date(), attempts },
-      });
-
-      try {
-        const payload: unknown = item.payload;
-        assertTransactionPayload(payload);
-
-        const signed = await this.signAndPrepare(operatorId, payload);
-        const response = await this.sendToMevWeb<TransactionResponse>(
-          operatorId,
-          MevRequestType.TRX,
-          MEV_ENDPOINTS.TRX,
-          signed,
-        );
-
-        await this.prisma.offlineQueue.update({
-          where: { id: item.id },
-          data: { status: QueueStatus.COMPLETED, processedAt: new Date(), errorMessage: null },
-        });
-
-        if (item.transactionId) {
-          await this.prisma.transaction.update({
-            where: { id: item.transactionId },
-            data: {
-              mevTransactionNumber: response.numeroTransactionMEV,
-              mevSubmissionStatus:  MevStatus.ACCEPTED,
-              mevSubmittedAt:       new Date(),
-              mevResponse:          response as object,
-              qrCodeUrl:            response.urlCodeQR,
-              certifiedData:        response.donneeCertifiee,
-              status:               TransactionStatus.INVOICED,
-              invoicedAt:           new Date(),
-            },
-          });
-        }
-        submitted++;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-
-        if (isTransientMevError(err)) {
-          // Still offline — put it back and stop to preserve chronological order
-          await this.prisma.offlineQueue.update({
-            where: { id: item.id },
-            data: { status: QueueStatus.PENDING, errorMessage: message },
-          });
-          this.logger.warn(`Offline batch for device ${deviceId} paused at item ${item.id}: ${message}`);
-          break;
-        }
-
-        // Business rejection or invalid payload — will not succeed on retry
-        await this.prisma.offlineQueue.update({
-          where: { id: item.id },
-          data: { status: QueueStatus.FAILED, errorMessage: message },
-        });
-        if (item.transactionId) {
-          await this.prisma.transaction.update({
-            where: { id: item.transactionId },
-            data: { mevSubmissionStatus: MevStatus.REJECTED, mevResponse: { error: message } },
-          });
-        }
-        await this.auditLogService.log({
-          operatorId,
-          eventType:   AuditEventType.MEV_SUBMISSION_FAILED,
-          severity:    LogSeverity.ERROR,
-          deviceId,
-          entityId:    item.transactionId ?? item.id,
-          entityType:  item.transactionId ? 'Transaction' : 'OfflineQueue',
-          description: `Transaction hors ligne rejetée: ${message}`,
-        });
-        failed++;
-      }
-    }
-
-    const remaining = await this.prisma.offlineQueue.count({
-      where: { deviceId, status: QueueStatus.PENDING },
-    });
-    return { submitted, failed, remaining };
   }
 
-  async checkMevWebConnectivity(operatorId: string): Promise<boolean> {
-    try {
-      const operator = await this.prisma.operator.findUnique({ where: { id: operatorId } });
-      if (!operator) return false;
-      const baseUrl = MEV_URLS[operator.environment];
-      await firstValueFrom(this.httpService.get(`${baseUrl}/health`, { timeout: 5000 }));
-      return true;
-    } catch {
-      return false;
-    }
+  async documentRequest(op: OperatorIdentity, m: SigningMaterial, reqDoc: ReqDoc): Promise<RetourDoc> {
+    return (await this.post<RetourDoc>('DOC', op.id, this.signedHeaders(m), reqDoc, m)).data;
   }
 
-  // ─── Private Helpers ───────────────────────────────────────────────────────
-
-  /**
-   * Sign the payload and inject the signature into entete.signature.
-   * Signature = RSA-SHA256(canonicalJSON(payload_without_signature)).
-   * SW-76 §5.2 — canonical JSON = alphabetically sorted keys, no whitespace.
-   */
-  private async signAndPrepare<T extends { entete: { signature: string } }>(
-    operatorId: string,
-    payload: T,
-  ): Promise<T> {
-    const withoutSig = { ...payload, entete: { ...payload.entete, signature: '' } };
-    const canonical = this.canonicalizeJson(withoutSig);
-    const signature = await this.certificatesService.signData(operatorId, canonical);
-    return { ...payload, entete: { ...payload.entete, signature } };
+  private signedHeaders(m: SigningMaterial): MevHeaders {
+    return { ...this.baseHeaders(), IDAPPRL: m.mevDeviceId, EMPRCERTIFTRANSM: m.thumbprint };
   }
 
-  /**
-   * Deterministic JSON serialization — keys sorted alphabetically at every level.
-   * Required by SW-76 §5.2 for RSA-SHA256 signature verification.
-   */
-  canonicalizeJson(obj: unknown): string {
-    if (obj === null || typeof obj !== 'object') return JSON.stringify(obj);
-    if (Array.isArray(obj)) return '[' + obj.map(v => this.canonicalizeJson(v)).join(',') + ']';
-    const sorted = Object.keys(obj as object)
-      .sort()
-      .reduce((acc, key) => {
-        acc[key] = (obj as Record<string, unknown>)[key];
-        return acc;
-      }, {} as Record<string, unknown>);
-    return '{' + Object.entries(sorted)
-      .map(([k, v]) => `${JSON.stringify(k)}:${this.canonicalizeJson(v)}`)
-      .join(',') + '}';
-  }
-
-  /**
-   * SHA-256 hash chain — links consecutive transactions per device per civil day.
-   * hashChain = SHA256( previousHash || '|' || transactionData )
-   */
-  generateHashChain(previousHash: string, transactionData: string): string {
-    return crypto
-      .createHash('sha256')
-      .update(`${previousHash}|${transactionData}`)
-      .digest('hex');
-  }
-
-  async getPreviousTransactionHash(
-    deviceId: string,
-    civilDate: string,
-    currentTransactionNumber: number,
-  ): Promise<string> {
-    if (currentTransactionNumber <= 1) {
-      // Genesis hash — first transaction of the day
-      return crypto.createHash('sha256').update(`GENESIS|${deviceId}|${civilDate}`).digest('hex');
-    }
-    const prev = await this.prisma.transaction.findFirst({
-      where: {
-        deviceId,
-        civilDate,
-        transactionNumber: currentTransactionNumber - 1,
-      },
-      select: { hashChain: true },
-    });
-    return prev?.hashChain ?? crypto.createHash('sha256').update(`GENESIS|${deviceId}|${civilDate}`).digest('hex');
-  }
-
-  /**
-   * Send a signed payload to MEV-WEB, log the request/response, audit on error.
-   */
-  private async sendToMevWeb<TResponse>(
-    operatorId: string,
-    requestType: MevRequestType,
-    endpoint: string,
-    payload: unknown,
-  ): Promise<TResponse> {
-    const operator = await this.prisma.operator.findUnique({ where: { id: operatorId } });
-    if (!operator) throw new Error('Operator not found');
-
-    const baseUrl = MEV_URLS[operator.environment];
-    const url = `${baseUrl}${endpoint}`;
-    const startTime = Date.now();
-
-    const logEntry = await this.prisma.mevRequestLog.create({
+  private async post<T>(kind: MevRequestKind, operatorId: string, headers: MevHeaders, body: unknown, signer?: SigningMaterial): Promise<{ status: number; data: T }> {
+    // SW-76 §4.2: ASCII text only. SIGNATRANSM covers exactly the bytes sent.
+    const raw = toAsciiJson(body);
+    const allHeaders: Record<string, string> = { 'Content-Type': 'application/json', ...(headers as unknown as Record<string, string>) };
+    if (signer) allHeaders.SIGNATRANSM = signP256(signer.privateKey, raw);
+    const url = `${this.cfg.mevBaseUrl}${this.cfg.mevPaths[kind]}`;
+    const started = Date.now();
+    const log = await this.prisma.mevRequestLog.create({
       data: {
         operatorId,
-        requestType,
-        environment: operator.environment,
-        requestPayload: payload as object,
+        requestType: kind as MevRequestType,
+        environment: this.cfg.mevEnvironment,
+        requestPayload: redact({ headers: allHeaders, body }) as Prisma.InputJsonValue,
       },
     });
+    const unreachable = async (status: number | undefined, code: string, why: string): Promise<never> => {
+      this.lastFailAt = new Date();
+      await this.prisma.mevRequestLog.update({
+        where: { id: log.id },
+        data: { httpStatus: status ?? null, mevErrorCode: code, duration: Date.now() - started, success: false },
+      });
+      this.logger.warn(`${kind} unreachable: ${why}`);
+      throw new MevUnreachableError(`MEV-WEB unreachable (${status ?? 'network'})`, status);
+    };
 
+    let res: { status: number; data: T };
     try {
-      const httpsAgent = await this.certificatesService.createHttpsAgent(operatorId);
-      const response = await firstValueFrom(
-        this.httpService.post<TResponse>(url, payload, {
-          httpsAgent,
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 30000,
+      res = await firstValueFrom(
+        this.http.post<T>(url, raw, {
+          headers: allHeaders,
+          timeout: this.cfg.mevTimeoutMs,
+          // 4xx answers are read below (rejections, or "try again later"); 5xx and network errors mean "unreachable".
+          validateStatus: (s) => s < 500,
+          transformRequest: [(d) => d],
         }),
       );
-
-      const duration = Date.now() - startTime;
-      await this.prisma.mevRequestLog.update({
-        where: { id: logEntry.id },
-        data: {
-          responsePayload: response.data as object,
-          httpStatus: response.status,
-          duration,
-          success: true,
-        },
-      });
-
-      this.logger.log(`MEV-WEB ${requestType} → ${response.status} (${duration}ms)`);
-      return response.data;
-
-    } catch (err: unknown) {
-      const duration = Date.now() - startTime;
-      const httpStatus = (err as any)?.response?.status;
-      const responseData = (err as any)?.response?.data;
-      const mevCode = responseData?.codeRetour ?? 'NETWORK_ERROR';
-      const mevMsg = responseData?.messageFr ?? MEV_ERROR_CODES['2000'];
-
-      await this.prisma.mevRequestLog.update({
-        where: { id: logEntry.id },
-        data: {
-          responsePayload: responseData ?? null,
-          httpStatus,
-          mevErrorCode: String(mevCode),
-          duration,
-          success: false,
-        },
-      });
-
-      await this.auditLogService.log({
-        operatorId,
-        eventType: AuditEventType.MEV_ERROR,
-        severity: LogSeverity.ERROR,
-        description: `MEV-WEB ${requestType} failed: ${mevMsg}`,
-        metadata: { mevCode, mevMsg, httpStatus, endpoint },
-      });
-
-      throw new MevWebError(String(mevCode), mevMsg, httpStatus);
+    } catch (err) {
+      return unreachable((err as { response?: { status?: number } })?.response?.status, 'UNREACHABLE', safeErrorMessage(err));
     }
+
+    const envelope = ANSWER_ENVELOPE[kind];
+    const answer: unknown = res.data;
+    const hasEnvelope = isObject(answer) && isObject(answer[envelope]);
+    if (TRANSIENT_4XX.has(res.status)) return unreachable(res.status, 'UNREACHABLE', `HTTP ${res.status} (try again later)`);
+    // A 2xx without the answer envelope did not come from MEV-WEB's service (proxy, captive portal, wrong host):
+    // nothing was recorded, so nothing is accepted; the transactions stay queued and are sent again.
+    if (res.status < 400 && !hasEnvelope) return unreachable(res.status, 'NOT_MEV_ANSWER', `HTTP ${res.status} without ${envelope}`);
+
+    this.lastOkAt = new Date();
+    let data = answer as T;
+    // Decided on the lists the callers read (readableErrors), never on a listErr found elsewhere in the body.
+    let errors = readableErrors(kind, answer);
+    if (res.status >= 400 && !errors.length) {
+      // Core-line rule: a 4xx is a rejection. Without an error where the caller reads it, it would read as "accepted".
+      const inner = hasEnvelope ? (answer as Record<string, Record<string, unknown>>)[envelope] : {};
+      errors = [httpRejection(res.status)];
+      data = { ...(isObject(answer) ? answer : {}), [envelope]: { ...inner, listErr: errors } } as T;
+    }
+    const listErr = errors.length ? String(errors[0]?.codRetour ?? 'ERR') : null;
+    await this.prisma.mevRequestLog.update({
+      where: { id: log.id },
+      data: {
+        responsePayload: redact(isObject(answer) ? answer : { nonJsonBody: true }) as Prisma.InputJsonValue,
+        httpStatus: res.status,
+        mevErrorCode: listErr,
+        duration: Date.now() - started,
+        success: res.status < 400 && !listErr,
+      },
+    });
+    this.logger.log(`${kind} -> HTTP ${res.status}${listErr ? ` codRetour ${listErr}` : ''} (${Date.now() - started} ms)`);
+    return { status: res.status, data };
   }
 }

@@ -1,35 +1,34 @@
-version: '3.9'
-
-# Development overrides — hot-reload + volume mounts
-# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Development overrides: hot reload + volume mounts, SIMULATOR only. No secret in this file (they come from .env).
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+# (Without Docker, use tools/local-run: embedded PostgreSQL + backend + simulator.)
 
 services:
   postgres:
     ports:
-      - "5432:5432"
+      - '5432:5432'
 
-  backend:
-    # The production stage has no dev tools (nest CLI) — use the full builder stage
+  qcmev-backend:
+    # The production image has no dev tools (nest CLI): use the dev stage.
     build:
       context: ./backend
-      target: builder
+      target: dev
     environment:
       NODE_ENV: development
       MEV_ENVIRONMENT: SIMULATOR
+    ports:
+      - '3001:3001'
     volumes:
-      - ./backend:/app
-      - /app/node_modules
-    command: >
-      sh -c "npx prisma migrate deploy && npm run start:dev"
+      - ./backend/src:/app/src
+      - ./backend/prisma:/app/prisma
+    # The dev stage runs: prisma migrate deploy && nest start --watch
 
   frontend:
     build:
       context: ./frontend
-      target: builder
+      target: dev
     environment:
       NODE_ENV: development
+      NEXT_PUBLIC_API_URL: http://qcmev-backend:3001
     volumes:
-      - ./frontend:/app
-      - /app/node_modules
-      - /app/.next
-    command: npm run dev
+      - ./frontend/src:/app/src
+    # The dev stage runs: npm run dev

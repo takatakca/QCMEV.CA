@@ -1,44 +1,40 @@
 /**
- * Takatak MEV — NestJS Application Bootstrap
- *
- * Starts the MEV-WEB SEV backend API.
- * Default port: 3001 (frontend proxy configured to this port)
+ * Takatak MEV backend. Not certified by Revenu Québec: SIMULATOR / DEV / ESSAI only until certification.
+ * The configuration is read and validated BEFORE Nest starts; a missing or weak secret stops the start.
  */
-
+import 'reflect-metadata';
+import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
+import { configureApp } from './bootstrap';
+import { AppConfig, ConfigError, loadConfig } from './config/app-config';
 
-async function bootstrap() {
-  const logger = new Logger('Bootstrap');
-  const app = await NestFactory.create(AppModule, { logger: ['log', 'error', 'warn', 'debug'] });
-
-  // CORS — allow Next.js frontend dev server
-  app.enableCors({
-    origin: [
-      'http://localhost:3000',
-      process.env.FRONTEND_URL ?? 'http://localhost:3000',
-    ],
-    credentials: true,
-  });
-
-  // Global validation
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist:        true,
-      forbidNonWhitelisted: false,
-      transform:        true,
-    }),
-  );
-
-  // Global prefix
-  app.setGlobalPrefix('api');
-
-  const port = process.env.PORT ?? 3001;
-  await app.listen(port);
-  logger.log(`🚀 Takatak MEV API running on http://localhost:${port}/api`);
-  logger.log(`🔵 MEV Simulator at http://localhost:${port}/api/mev-simulator`);
-  logger.log(`📋 Environment: ${process.env.NODE_ENV ?? 'development'}`);
+async function bootstrap(): Promise<void> {
+  try {
+    process.loadEnvFile?.('.env');
+  } catch {
+    // no .env file: the environment is used as is
+  }
+  let cfg: AppConfig;
+  try {
+    cfg = loadConfig();
+  } catch (e) {
+    if (e instanceof ConfigError) {
+      // eslint-disable-next-line no-console
+      console.error(`Configuration refused: ${e.message}`);
+      process.exit(78);
+    }
+    throw e;
+  }
+  const app = await NestFactory.create<NestExpressApplication>(AppModule.forRoot(cfg), { rawBody: true, logger: cfg.logLevels, bodyParser: true });
+  configureApp(app, cfg);
+  await app.listen(cfg.port, '0.0.0.0');
+  const log = new Logger('Bootstrap');
+  log.log(`Takatak MEV API on port ${cfg.port} (MEV_ENVIRONMENT=${cfg.mevEnvironment}, certified=${cfg.certified})`);
+  if (cfg.simulatorEnabled) log.log('Local simulator mounted at /api/mev-simulator (test double, not Revenu Québec)');
+  log.log(`Food Hub integration ${cfg.foodhub.enabled ? 'ENABLED at /api/v1/integrations/foodhub' : 'disabled (QCMEV_FOODHUB_ENABLED=false)'}`);
+  log.log(`Operator self-registration ${cfg.publicRegistration ? 'open (POST /api/operators/register)' : 'closed (QCMEV_PUBLIC_REGISTRATION=false)'}`);
 }
 
-bootstrap();
+void bootstrap();

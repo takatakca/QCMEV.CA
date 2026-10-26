@@ -1,0 +1,86 @@
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { CertificateType } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
+import { renderReceipt, RenderedReceipt } from './receipt-renderer';
+
+export interface ReceiptObject extends RenderedReceipt {
+  qcmevTransactionId: string;
+  noTrans: string;
+  datTrans: string;
+  utc: string;
+  deviceId: string;
+  mevStatus: string;
+  mevProcessedAt: string | null;
+  mevTransactionNumber: string | null;
+  issuedAt: string;
+}
+
+/**
+ * « Facture corrigée » / « Note de crédit corrigée » (PROVEN, « Utilisation de références »): a new closing receipt that
+ * references an earlier closing receipt (the credited one it replaces), or a credit note that references a credit note.
+ * A credit note of a receipt, a reproduction or a duplicate is not a correction.
+ */
+export function correctionOf(tx: { transactionType: string; printMode: string; documentKind: string; related?: { transactionType: string; documentKind: string } | null }): 'RECEIPT' | 'CREDIT_NOTE' | null {
+  const r = tx.related;
+  if (!r || tx.transactionType !== 'RFER' || tx.printMode !== 'FAC' || r.transactionType !== 'RFER') return null;
+  if (tx.documentKind === 'CREDIT_NOTE') return r.documentKind === 'CREDIT_NOTE' ? 'CREDIT_NOTE' : null;
+  return r.documentKind === 'CREDIT_NOTE' ? null : 'RECEIPT';
+}
+
+@Injectable()
+export class ReceiptService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async build(transactionId: string, operatorId?: string): Promise<ReceiptObject> {
+    const tx = await this.prisma.transaction.findFirst({
+      where: { id: transactionId, ...(operatorId ? { operatorId } : {}) },
+      include: { items: { orderBy: { sortOrder: 'asc' } }, operator: true, device: true, related: true },
+    });
+    if (!tx) throw new NotFoundException('Transaction not found');
+    const cert = await this.prisma.certificate.findFirst({
+      where: { deviceId: tx.deviceId, type: CertificateType.SEV, createdAt: { lte: tx.createdAt } },
+      orderBy: { createdAt: 'desc' },
+    });
+    const certificateInvalid = !cert || (!!cert.validUntil && cert.validUntil.getTime() < tx.createdAt.getTime()) || (!!cert.revokedAt && cert.revokedAt.getTime() < tx.createdAt.getTime());
+    const rendered = await renderReceipt({
+      merchant: { name: tx.operator.name, address: tx.operator.address, city: tx.operator.city, noTPS: tx.operator.noTPS, noTVQ: tx.operator.noTVQ },
+      documentKind: tx.documentKind,
+      typTrans: tx.transactionType,
+      modImpr: tx.printMode,
+      formImpr: tx.printFormat,
+      modTrans: tx.transactionMode,
+      typServ: tx.serviceType,
+      modPai: tx.paymentMode,
+      noTrans: tx.noTrans,
+      datTrans: tx.datTrans,
+      utc: tx.utcOffset,
+      deviceId: tx.device.mevDeviceId ?? tx.device.serialNumber,
+      externalRef: tx.externalRef,
+      lines: tx.items.map((i) => ({ description: i.description, quantity: i.quantity, unitPriceCents: i.unitPriceCents, totalCents: i.totalCents, tax: i.tax, isModifier: i.isModifier })),
+      subtotalCents: tx.subtotalCents,
+      tpsCents: tx.tpsCents,
+      tvqCents: tx.tvqCents,
+      totalCents: tx.totalCents,
+      tipCents: tx.tipCents,
+      reference: tx.related ? { noTrans: tx.related.noTrans, datTrans: tx.related.datTrans } : null,
+      corrects: correctionOf(tx),
+      mevStatus: tx.mevStatus,
+      mevProcessedAt: tx.mevProcessedAt,
+      mevTransactionNumber: tx.mevTransactionNumber,
+      certificateInvalid,
+      qrContent: tx.qrContent ?? '',
+    });
+    return {
+      qcmevTransactionId: tx.id,
+      noTrans: tx.noTrans,
+      datTrans: tx.datTrans,
+      utc: tx.utcOffset,
+      deviceId: tx.device.mevDeviceId ?? '',
+      mevStatus: tx.mevStatus,
+      mevProcessedAt: tx.mevProcessedAt,
+      mevTransactionNumber: tx.mevTransactionNumber,
+      issuedAt: tx.invoicedAt.toISOString(),
+      ...rendered,
+    };
+  }
+}

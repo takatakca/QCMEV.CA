@@ -1,14 +1,19 @@
 /** @type {import('next').NextConfig} */
+const backend = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
+// Only the staff routes are proxied. The Food Hub integration API (/api/v1/integrations/...) and the
+// simulator's write endpoints are never reachable through the dashboard's public port.
+const STAFF = ['auth', 'operators', 'devices', 'certificates', 'transactions', 'reports'];
+
 const nextConfig = {
   reactStrictMode: true,
+  poweredByHeader: false,
   async rewrites() {
     return [
-      {
-        source: '/api/:path*',
-        // Server-side proxy target. Rewrites are baked in at `next build`, so in Docker
-        // API_INTERNAL_URL is passed as a build arg (http://backend:3001 — the compose service).
-        destination: `${process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/:path*`,
-      },
+      ...STAFF.map((p) => ({ source: `/api/${p}/:path*`, destination: `${backend}/api/${p}/:path*` })),
+      ...STAFF.map((p) => ({ source: `/api/${p}`, destination: `${backend}/api/${p}` })),
+      { source: '/api/health', destination: `${backend}/api/health` },
+      { source: '/api/mev-simulator/health', destination: `${backend}/api/mev-simulator/health` },
     ];
   },
 };

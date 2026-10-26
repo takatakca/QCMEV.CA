@@ -47,5 +47,6 @@ coverage/
 # Docker volumes
 postgres-data/
 
-# TypeScript incremental build cache
+# Local run tool (embedded PostgreSQL) and its temporary output
+tools/local-run/node_modules/
 *.tsbuildinfo
