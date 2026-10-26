@@ -647,7 +647,7 @@ export class TransactionsService {
 
   async dailySummary(operatorId: string, civilDate?: string) {
     const date = civilDate && /^\d{8}$/.test(civilDate) ? civilDate : civilTime().civilDate;
-    const txs = await this.prisma.transaction.findMany({ where: { operatorId, civilDate: date, printMode: 'FAC', transactionMode: 'OPE' } });
+    const txs = await this.prisma.transaction.findMany({ where: { operatorId, civilDate: date, printMode: 'FAC', transactionMode: 'OPE', transactionType: 'RFER' } });
     const sum = (f: (t: Transaction) => number) => txs.reduce((s, t) => s + f(t), 0);
     return {
       civilDate: date,

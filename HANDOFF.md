@@ -289,3 +289,8 @@ Ne pas refaire les documents administratifs. Ne pas réinitialiser une base exis
 ### Résultats et installation distante
 
 Parcours complet du 26 octobre : 203 tests unitaires + 24 tests DB exécutés séparément, 40+2 contrôles Food Hub, précontrôle/migrations/dérive, CRT/UTL, redémarrage et limitation : tout passe localement. Frontend Docker construit et démarré, transport HTTP du proxy vérifié. Audits de production 0/0. Première CI sur `5bf6567` : échec npm ci backend sur Node 22/npm 10 (entrée Webpack imbriquée manquante), malgré réussite npm 11 locale. Reproduit dans Node 22, lockfile corrigé par npm 10.9.9, dry-run gelé réussi; nouvelle CI nécessaire. Image backend toujours à confirmer hors du blocage HTTP 403 Alpine local.
+
+
+### CI confirmée et résumé financier journalier
+
+CI complète du commit `b14d580` réussie : https://github.com/takatakca/QCMEV.CA/actions/runs/40410331204 (backend/frontend, e2e-simulator, frontend-container, backend-image). Le build backend est donc prouvé sur GitHub; le refus Alpine local n’est pas un défaut de l’image. Dernier défaut détecté et corrigé : les taxes des additions/estimations entraient dans le résumé financier du jour. Filtre limité aux clôtures RFER et test DB ajouté. Nouveau parcours local complet : **25/25 DB, 203 unitaires, 40+2 Food Hub**, tout passe. Nouvelle CI sur ce correctif à vérifier. Les mises à jour uniquement documentaires ne relancent plus inutilement le workflow push.

@@ -1,10 +1,10 @@
 {
-  "at": "2026-10-26T22:03:08.417Z",
+  "at": "2026-10-26T22:13:25.650Z",
   "node": "v24.19.0",
   "scope": "Local PostgreSQL 16 and project simulator only. Not RQ DEV/ESSAI or production.",
   "local_run": {
     "ok": true,
-    "seconds": 34,
+    "seconds": 37,
     "steps": [
       {
         "step": "embedded postgres 16",
@@ -37,7 +37,7 @@
       {
         "step": "SW-77 preparation suite (database, in-process API + simulator)",
         "ok": true,
-        "seconds": 11,
+        "seconds": 12,
         "exitCode": 0
       },
       {
@@ -61,7 +61,7 @@
       {
         "step": "jest unit tests",
         "ok": true,
-        "seconds": 8,
+        "seconds": 9,
         "exitCode": 0
       },
       {
@@ -90,9 +90,9 @@
   },
   "tests": {
     "unit_passed": 203,
-    "database_cases_passed": 24,
-    "database_cases_total": 24,
-    "database_cases_skipped_in_unit_command_but_executed_separately": 24,
+    "database_cases_passed": 25,
+    "database_cases_total": 25,
+    "database_cases_skipped_in_unit_command_but_executed_separately": 25,
     "foodhub_main_passed": 40,
     "foodhub_after_restart_passed": 2
   },
@@ -127,14 +127,20 @@
     "scope": "Frontend container and internal HTTP proxy only; backend is a deterministic test server, not the full application."
   },
   "backend_image": {
-    "status": "blocked",
-    "cause": "Alpine package repository returned HTTP 403 in this cloud"
+    "local_status": "blocked by Alpine package repository HTTP 403",
+    "github_ci_build": "passed at b14d580"
   },
   "compose": {
     "configuration_validation": "passed for standard and development with temporary non-production credentials",
     "full_stack_run": "not executed"
   },
-  "remote_ci": "not yet observed",
+  "remote_ci": {
+    "code_commit": "b14d5805ae80dd9038d264c17a2d8a8e6f655019",
+    "run_id": "40410331204",
+    "conclusion": "success",
+    "url": "https://github.com/takatakca/QCMEV.CA/actions/runs/40410331204",
+    "scope": "All five jobs; last daily-summary fix requires its own run."
+  },
   "installation": {
     "current_instance_full_install_and_build_script": "passed",
     "node22_npm10_frozen_install_dry_run": "passed after fixing missing nested Webpack lock entry",

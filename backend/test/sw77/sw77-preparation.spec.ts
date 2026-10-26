@@ -548,6 +548,20 @@ suite('SW-77 preparation suite (database + local simulator; not Revenu Québec S
     await assertMigrationBaseline(prisma);
   }));
 
+  it('daily financial totals exclude additions and estimates before the closing receipt', track('DAILY-SUMMARY')(async () => {
+    const before = await ok('GET', '/transactions/daily-summary');
+    await sale(deviceA, [item('Addition, not paid yet', 1000)], 'AUC', { documentKind: 'ADDITION' });
+    await sale(deviceA, [item('Estimate, not a sale', 2000)], 'AUC', { documentKind: 'ESTIMATE' });
+    const pending = await ok('GET', '/transactions/daily-summary');
+    expect(pending).toEqual(before);
+    const receipt = await sale(deviceA, [item('Closing receipt', 1000)]);
+    const after = await ok('GET', '/transactions/daily-summary');
+    expect(after.transactionCount).toBe(before.transactionCount + 1);
+    expect(after.salesCents).toBe(before.salesCents + receipt.subtotalCents);
+    expect(after.tpsCents).toBe(before.tpsCents + receipt.tpsCents);
+    expect(after.tvqCents).toBe(before.tvqCents + receipt.tvqCents);
+  }));
+
   it('operator B is untouched and can certify its own device', track('TENANT-B')(async () => {
     expect((await ok('GET', '/transactions', undefined, tokenB))).toEqual([]);
     const c = await ok('POST', `/devices/${deviceB}/certificate`, {}, tokenB);
