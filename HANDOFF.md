@@ -294,3 +294,10 @@ Parcours complet du 26 octobre : 203 tests unitaires + 24 tests DB exécutés s�
 ### CI confirmée et résumé financier journalier
 
 CI complète du commit `b14d580` réussie : https://github.com/takatakca/QCMEV.CA/actions/runs/40410331204 (backend/frontend, e2e-simulator, frontend-container, backend-image). Le build backend est donc prouvé sur GitHub; le refus Alpine local n’est pas un défaut de l’image. Dernier défaut détecté et corrigé : les taxes des additions/estimations entraient dans le résumé financier du jour. Filtre limité aux clôtures RFER et test DB ajouté. Nouveau parcours local complet : **25/25 DB, 203 unitaires, 40+2 Food Hub**, tout passe. Nouvelle CI sur ce correctif à vérifier. Les mises à jour uniquement documentaires ne relancent plus inutilement le workflow push.
+
+
+### Livraison vérifiée — fin de cette session
+
+**Code `23824ed`, CI complète Success : https://github.com/takatakca/QCMEV.CA/actions/runs/40410849048.** Les cinq jobs passent : backend, frontend, e2e-simulator, frontend-container, backend-image. Résultats locaux finaux : 203 unitaires, 25 DB (dont le résumé financier), 40+2 contrôles Food Hub, aucun audit de production connu. L’installation normale et les builds ont aussi été réexécutés. Les mises à jour documentaires suivantes ne modifient pas le code vérifié.
+
+Tous les correctifs sont sur `fix/backend-readiness`. Un pointeur et AGENTS.md sont sauvegardés sur `main` pour retrouver cette branche; le code applicatif main n’a pas été déployé ou migré. Aucun accès cible, envoi de courriel, dépôt OneDrive, clé HSM ou certification n’a été inventé. Les limitations et les fonctions encore absentes sont explicites dans READINESS.md et CERTIFICATION.md. Pas de processus ou surveillance utilisateur laissé en arrière-plan; les jobs CI mentionnés ont réellement terminé.

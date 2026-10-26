@@ -128,18 +128,26 @@
   },
   "backend_image": {
     "local_status": "blocked by Alpine package repository HTTP 403",
-    "github_ci_build": "passed at b14d580"
+    "github_ci_build": "passed at 23824edb3a8009df28997172e17b0434a3dd7c73"
   },
   "compose": {
     "configuration_validation": "passed for standard and development with temporary non-production credentials",
     "full_stack_run": "not executed"
   },
   "remote_ci": {
-    "code_commit": "b14d5805ae80dd9038d264c17a2d8a8e6f655019",
-    "run_id": "40410331204",
+    "code_commit": "23824edb3a8009df28997172e17b0434a3dd7c73",
+    "run_id": "40410849048",
     "conclusion": "success",
-    "url": "https://github.com/takatakca/QCMEV.CA/actions/runs/40410331204",
-    "scope": "All five jobs; last daily-summary fix requires its own run."
+    "url": "https://github.com/takatakca/QCMEV.CA/actions/runs/40410849048",
+    "jobs": [
+      "backend",
+      "frontend",
+      "e2e-simulator",
+      "frontend-container",
+      "backend-image"
+    ],
+    "observed_from": "GitHub public run summary, Status Success",
+    "scope": "Includes final daily-summary correction and all five required jobs."
   },
   "installation": {
     "current_instance_full_install_and_build_script": "passed",
