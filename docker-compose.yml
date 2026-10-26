@@ -41,11 +41,12 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        API_INTERNAL_URL: ${API_INTERNAL_URL:-http://qcmev-backend:3001}
     restart: unless-stopped
     depends_on:
       - qcmev-backend
-    environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001}
+    # Next rewrites are built into the image: set the build arg above, not a runtime public URL.
     ports:
       - '3000:3000'
 

@@ -1,0 +1,138 @@
+{
+  "at": "2026-10-26T22:03:08.417Z",
+  "node": "v24.19.0",
+  "scope": "Local PostgreSQL 16 and project simulator only. Not RQ DEV/ESSAI or production.",
+  "local_run": {
+    "ok": true,
+    "seconds": 34,
+    "steps": [
+      {
+        "step": "embedded postgres 16",
+        "ok": true
+      },
+      {
+        "step": "build",
+        "ok": true,
+        "seconds": 3,
+        "exitCode": 0
+      },
+      {
+        "step": "database migration preflight",
+        "ok": true,
+        "seconds": 0,
+        "exitCode": 0
+      },
+      {
+        "step": "prisma migrate deploy",
+        "ok": true,
+        "seconds": 0,
+        "exitCode": 0
+      },
+      {
+        "step": "migration drift (database = schema.prisma)",
+        "ok": true,
+        "seconds": 0,
+        "exitCode": 0
+      },
+      {
+        "step": "SW-77 preparation suite (database, in-process API + simulator)",
+        "ok": true,
+        "seconds": 11,
+        "exitCode": 0
+      },
+      {
+        "step": "seed:operator (placeholders)",
+        "ok": true,
+        "seconds": 1,
+        "exitCode": 0
+      },
+      {
+        "step": "backend up (SIMULATOR, Food Hub enabled)",
+        "ok": true
+      },
+      {
+        "step": "CRT + UTL E2E-A",
+        "ok": true
+      },
+      {
+        "step": "CRT + UTL E2E-B",
+        "ok": true
+      },
+      {
+        "step": "jest unit tests",
+        "ok": true,
+        "seconds": 8,
+        "exitCode": 0
+      },
+      {
+        "step": "internal scenarios (scripts/run-test-cases.ts)",
+        "ok": true,
+        "seconds": 1,
+        "exitCode": 0
+      },
+      {
+        "step": "Food Hub contract e2e (main)",
+        "ok": true,
+        "seconds": 5,
+        "exitCode": 0
+      },
+      {
+        "step": "Food Hub contract e2e (after restart)",
+        "ok": true,
+        "seconds": 0,
+        "exitCode": 0
+      },
+      {
+        "step": "rate limit: 11th login in a minute → 429",
+        "ok": true
+      }
+    ]
+  },
+  "tests": {
+    "unit_passed": 203,
+    "database_cases_passed": 24,
+    "database_cases_total": 24,
+    "database_cases_skipped_in_unit_command_but_executed_separately": 24,
+    "foodhub_main_passed": 40,
+    "foodhub_after_restart_passed": 2
+  },
+  "dependency_audits_production": {
+    "backend": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0,
+      "total": 0
+    },
+    "frontend": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0,
+      "total": 0
+    }
+  },
+  "frontend_container": {
+    "ok": true,
+    "image": "sha256:e6de8fa8c1918d944271f370477a179a826874ab9b0c8fe2d7eb35c062c0bb89",
+    "checks": [
+      "Container /login returns 200 with login content",
+      "Internal Docker proxy forwards /api/health/ready",
+      "Internal Docker proxy forwards /api/operators/me",
+      "Public proxy does not expose /api/v1/integrations/foodhub/health",
+      "Public proxy does not expose /api/mev-simulator/transaction"
+    ],
+    "scope": "Frontend container and internal HTTP proxy only; backend is a deterministic test server, not the full application."
+  },
+  "backend_image": {
+    "status": "blocked",
+    "cause": "Alpine package repository returned HTTP 403 in this cloud"
+  },
+  "compose": {
+    "configuration_validation": "passed for standard and development with temporary non-production credentials",
+    "full_stack_run": "not executed"
+  },
+  "remote_ci": "not yet observed"
+}

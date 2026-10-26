@@ -90,6 +90,12 @@ export class FoodHubService {
       await this.prisma.integrationEvent.create({ data: { eventId: info.eventId, tenantId: info.tenantId, key, bodyHash: info.bodyHash } });
     } catch (e) {
       if (!isUniqueViolation(e)) throw e;
+      // Another request may win between findUnique and create. Apply exactly the same replay check to its row;
+      // swallowing P2002 would let a different signed body proceed under an already-used event id.
+      const winner = await this.prisma.integrationEvent.findUnique({ where: { eventId: info.eventId } });
+      if (!winner || winner.bodyHash !== info.bodyHash || winner.key !== key || winner.tenantId !== info.tenantId) {
+        throw new ConflictException({ statusCode: 409, error: 'replay_conflict', message: 'this event id was already used with another body' });
+      }
     }
   }
 

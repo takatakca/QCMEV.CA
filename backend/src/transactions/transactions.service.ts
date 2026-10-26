@@ -305,6 +305,8 @@ export class TransactionsService {
     const entries = await this.prisma.offlineQueue.findMany({
       where: { deviceId, status: QueueStatus.PENDING, transactionId: { not: null } },
       include: { transaction: true },
+      orderBy: { transaction: { deviceSeq: 'asc' } },
+      take: 100,
     });
     const ordered = entries.filter((e) => e.transaction).sort((a, b) => a.transaction!.deviceSeq - b.transaction!.deviceSeq).slice(0, 100);
     if (!ordered.length) return { sent: 0, accepted: 0, settled: 0, offline: false, halted: false };
@@ -332,6 +334,9 @@ export class TransactionsService {
         halted = true;
         break;
       }
+      // Numbering restarts each civil day. A batch spanning midnight may contain "1" twice, while replies only
+      // identify noTrans: split before the duplicate so no response can be written onto the wrong fiscal record.
+      if (trans.some((previous) => previous.noTrans === t.noTrans)) break;
       pending.push(e);
       trans.push(t);
     }
@@ -537,12 +542,28 @@ export class TransactionsService {
         taxOverride,
       },
       modification: { type: p.modificationType ?? ModificationType.CREDIT_NOTE, originalId: original.id, reason: p.reason ?? null, previous: { subtotalCents: original.subtotalCents }, next: { creditedCents: sum } },
-      inTx: p.inTx,
-    });
-    const nowCredited = credited - sum;
-    await this.prisma.transaction.update({
-      where: { id: original.id },
-      data: { status: -nowCredited >= original.subtotalCents ? TransactionStatus.CREDITED : TransactionStatus.PARTIALLY_CREDITED },
+      inTx: async (tx, row) => {
+        // Credit limits must be checked inside the transaction, not only before issuance. Two concurrent refunds
+        // (including from different devices/processes) otherwise both see the same remaining balance.
+        await tx.$queryRaw`SELECT id FROM "Transaction" WHERE id = ${original.id} FOR UPDATE`;
+        const existing = await tx.transaction.aggregate({
+          where: { relatedTransactionId: original.id, documentKind: DocumentKind.CREDIT_NOTE, id: { not: row.id } },
+          _sum: { subtotalCents: true, tpsCents: true, tvqCents: true, totalCents: true },
+        });
+        const alreadyCredited = existing._sum.subtotalCents ?? 0;
+        if (p.full && alreadyCredited !== 0) throw new BadRequestException('This sale already has a credit note; credit the remaining lines instead');
+        const balance = original.subtotalCents + alreadyCredited;
+        if (sum > balance) throw new SaleRuleError('lines', `credit (${mevAmount(sum)}) exceeds what remains on the sale (${mevAmount(balance)})`);
+        for (const field of ['tpsCents', 'tvqCents', 'totalCents'] as const) {
+          const remainingAmount = original[field] + (existing._sum[field] ?? 0);
+          if (-row[field] > remainingAmount) throw new SaleRuleError(field, `credit exceeds the remaining ${field} on the sale`);
+        }
+        await tx.transaction.update({
+          where: { id: original.id },
+          data: { status: sum >= balance ? TransactionStatus.CREDITED : TransactionStatus.PARTIALLY_CREDITED },
+        });
+        if (p.inTx) await p.inTx(tx, row);
+      },
     });
     await this.audit.log({ operatorId: p.operatorId, eventType: AuditEventType.TRANSACTION_CREDITED, userId: p.userId, entityId: original.id, entityType: 'Transaction', description: `credit note ${result.transaction.noTrans} on transaction ${original.noTrans}${p.reason ? `: ${p.reason}` : ''}` });
     return result;

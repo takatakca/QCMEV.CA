@@ -32,11 +32,14 @@ import { configureApp } from '../../src/bootstrap';
 import { CertificateLifecycleService } from '../../src/certificates/certificate-lifecycle.service';
 import { canonicalJson } from '../../src/common/canonical-json';
 import { civilTime } from '../../src/common/time';
+import * as time from '../../src/common/time';
 import { loadConfig } from '../../src/config/app-config';
 import * as x509 from '@peculiar/x509';
 import { FIRST_PRECED, GENESIS_HASH, nextHashChain, transactionSignedString, verifyP256 } from '../../src/crypto/ecdsa';
 import { KEY_VAULT, KeyVault } from '../../src/crypto/key-vault';
 import { PrismaService } from '../../src/prisma/prisma.service';
+import { TransactionsService } from '../../src/transactions/transactions.service';
+import { assertMigrationBaseline } from '../../src/cli/check-database';
 
 const RUN = process.env.QCMEV_DB_TESTS === '1' && !!process.env.DATABASE_URL;
 const suite = RUN ? describe : describe.skip;
@@ -480,6 +483,69 @@ suite('SW-77 preparation suite (database + local simulator; not Revenu Québec S
     expect(sentModPai.some((s) => s.includes('"CARTE"'))).toBe(false);
     // Put the stored record back (it stays REJECTED) so that database-wide audits of the chain still recompute.
     await prisma.transaction.update({ where: { id: tx.id }, data: { requestJson: stored.requestJson as object } });
+  }));
+
+  it('concurrent full and partial credits never exceed the original sale, even with stale prechecks', track('CONCURRENT-CREDIT')(async () => {
+    const svc = app.get(TransactionsService);
+    for (const full of [true, false]) {
+      const original = await sale(deviceA, [item('First', 800), item('Second', 200)]);
+      // Force both requests to see the same stale precheck. The database transaction must recheck the balance.
+      const stale = jest.spyOn(svc, 'creditedSoFar').mockResolvedValue(0);
+      try {
+        const body = full ? { full: true } : { full: false, itemIds: [original.items[0].id] };
+        const results = await Promise.all([
+          api('POST', `/transactions/${original.id}/credit-note`, body),
+          api('POST', `/transactions/${original.id}/credit-note`, body),
+        ]);
+        expect(results.map((r) => r.status).sort()).toEqual(full ? [201, 400] : [201, 422]);
+        const credits = await prisma.transaction.findMany({ where: { relatedTransactionId: original.id, documentKind: 'CREDIT_NOTE' } });
+        expect(credits).toHaveLength(1);
+        expect(credits[0].subtotalCents).toBe(full ? -1000 : -800);
+        const stored = await prisma.transaction.findUniqueOrThrow({ where: { id: original.id } });
+        expect(stored.status).toBe(full ? 'CREDITED' : 'PARTIALLY_CREDITED');
+      } finally {
+        stale.mockRestore();
+      }
+    }
+  }));
+
+  it('offline transactions numbered 1 on two civil days receive different acknowledgements', track('MIDNIGHT-BATCH')(async () => {
+    const realCivilTime = time.civilTime;
+    const firstDay = realCivilTime(new Date(Date.now() + 86400_000));
+    const secondDay = realCivilTime(new Date(Date.now() + 2 * 86400_000));
+    const clock = jest.spyOn(time, 'civilTime');
+    let a: any;
+    let b: any;
+    await ok('POST', '/mev-simulator/_control', { mevDown: true }, '');
+    try {
+      clock.mockReturnValue(firstDay);
+      a = await sale(deviceA, [item('Next day', 100)]);
+      clock.mockReturnValue(secondDay);
+      b = await sale(deviceA, [item('Following day', 200)]);
+      expect([a.noTrans, b.noTrans]).toEqual(['1', '1']);
+      expect(a.civilDate).not.toBe(b.civilDate);
+    } finally {
+      clock.mockRestore();
+      await ok('POST', '/mev-simulator/_control', { mevDown: false }, '');
+    }
+    const result = await ok('POST', `/devices/${deviceA}/flush-queue`, {});
+    expect(result).toMatchObject({ accepted: 2, pendingCount: 0 });
+    const storedA = await ok('GET', `/transactions/${a.id}`);
+    const storedB = await ok('GET', `/transactions/${b.id}`);
+    expect(storedA.mevStatus).toBe('ACCEPTED');
+    expect(storedB.mevStatus).toBe('ACCEPTED');
+    expect(storedA.mevTransactionNumber).toBeTruthy();
+    expect(storedA.mevTransactionNumber).not.toBe(storedB.mevTransactionNumber);
+  }));
+
+  it('deployment preflight refuses a legacy baseline without changing the stored migration', track('MIGRATION-GUARD')(async () => {
+    await assertMigrationBaseline(prisma);
+    await expect(prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`UPDATE "_prisma_migrations" SET checksum = 'legacy-baseline' WHERE migration_name = '20261024000000_init'`;
+      await assertMigrationBaseline(tx);
+    })).rejects.toThrow(/Incompatible initial migration/);
+    // The failed preflight transaction rolls back, preserving the actual database and its metadata.
+    await assertMigrationBaseline(prisma);
   }));
 
   it('operator B is untouched and can certify its own device', track('TENANT-B')(async () => {

@@ -6,7 +6,7 @@
  * job (ScheduleModule) are always on.
  */
 import { HttpModule } from '@nestjs/axios';
-import { Controller, DynamicModule, Get, Inject, Injectable, Module } from '@nestjs/common';
+import { Controller, DynamicModule, Get, Inject, Injectable, Module, ServiceUnavailableException } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
@@ -50,12 +50,23 @@ export class TenantThrottlerGuard extends ThrottlerGuard {
 @SkipThrottle(SKIP_ALL_THROTTLES)
 @Controller('health')
 export class HealthController {
-  constructor(@Inject(APP_CONFIG) private readonly cfg: AppConfig) {}
+  constructor(@Inject(APP_CONFIG) private readonly cfg: AppConfig, private readonly prisma: PrismaService) {}
 
   /** Liveness only: no data, no identity. */
   @Get()
   health() {
     return { status: 'ok', service: 'takatak-mev', environment: this.cfg.mevEnvironment, certified: this.cfg.certified };
+  }
+
+  /** Readiness is distinct from liveness: a running process with an unavailable database must not receive traffic. */
+  @Get('ready')
+  async ready() {
+    try {
+      await this.prisma.$queryRaw`SELECT 1`;
+    } catch {
+      throw new ServiceUnavailableException({ statusCode: 503, status: 'not_ready', database: 'unavailable' });
+    }
+    return { ...this.health(), database: 'ready' };
   }
 }
 

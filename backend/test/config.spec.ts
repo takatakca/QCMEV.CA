@@ -53,3 +53,25 @@ describe('configuration: no default secret, the environment really decides', () 
     expect(loadConfig({ ...good(), QCMEV_FOODHUB_ENABLED: 'true', QCMEV_FOODHUB_SECRET: crypto.randomBytes(32).toString('hex') }).foodhub.enabled).toBe(true);
   });
 });
+
+
+describe('connection and scheduler numeric configuration', () => {
+  it.each(['MEV_TIMEOUT_MS', 'QCMEV_FOODHUB_RATE_PER_SECOND', 'MEV_OFFLINE_FLUSH_SECONDS', 'PORT'])(
+    'refuses invalid %s rather than silently creating an unbounded timeout or a fast timer', (name) => {
+      for (const value of ['NaN', 'Infinity', '-1', '1.5']) expect(() => loadConfig({ ...good(), [name]: value })).toThrow(ConfigError);
+    },
+  );
+  it('allows disabling the offline scheduler explicitly and validates the port range', () => {
+    expect(loadConfig({ ...good(), MEV_OFFLINE_FLUSH_SECONDS: '0' }).offlineFlushSeconds).toBe(0);
+    expect(() => loadConfig({ ...good(), MEV_TIMEOUT_MS: '0' })).toThrow(ConfigError);
+    expect(() => loadConfig({ ...good(), PORT: '65536' })).toThrow(ConfigError);
+  });
+});
+
+
+describe('JWT duration configuration', () => {
+  it('requires an explicit unit, so a numeric-looking string cannot silently become milliseconds', () => {
+    expect(loadConfig({ ...good(), JWT_EXPIRES_IN: '30m' }).jwtExpiresIn).toBe('30m');
+    for (const value of ['3600', 'forever', '0h', '-1h']) expect(() => loadConfig({ ...good(), JWT_EXPIRES_IN: value })).toThrow(ConfigError);
+  });
+});

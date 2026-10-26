@@ -15,16 +15,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const TX_TYPE_LABELS: Record<string, string> = {
-  ADDITION:              'Vente',
-  REFUND_CREDIT:         'Remboursement',
-  NO_SALE:               'Sans vente',
-  ESTIMATE:              'Estimation',
-  TRAINING:              'Formation',
-  DUPLICATE:             'Duplicata',
-  REPLACEMENT:           'Remplacement',
-  CANCELLATION:          'Annulation',
-  CORRECTION:            'Correction',
-  CLOSING_RECEIPT:       'Fermeture',
+  RFER: 'Reçu de fermeture', ADDI: 'Addition', ESTM: 'Estimation', SOUM: 'Soumission',
 };
 
 export default function TransactionsPage() {
@@ -61,9 +52,9 @@ export default function TransactionsPage() {
 
         {!loading && !error && transactions.length === 0 && (
           <div className="card text-center py-12">
-            <p className="text-gray-500 text-lg">Aucune transaction aujourd'hui</p>
+            <p className="text-gray-500 text-lg">Aucune transaction</p>
             <p className="text-sm text-gray-400 mt-1">
-              Les transactions du jour apparaîtront ici
+              Les transactions récentes apparaîtront ici
             </p>
             <Link href="/transactions/new" className="btn-primary mt-4 inline-block">
               Créer une transaction
@@ -92,7 +83,7 @@ export default function TransactionsPage() {
                       {tx.transactionNumber}
                     </td>
                     <td className="px-4 py-3">
-                      {TX_TYPE_LABELS[tx.transactionType] ?? tx.transactionType}
+                      {tx.documentKind === 'CREDIT_NOTE' ? 'Note de crédit' : TX_TYPE_LABELS[tx.transactionType] ?? tx.transactionType}
                     </td>
                     <td className="px-4 py-3 text-gray-500">
                       {new Date(tx.createdAt).toLocaleTimeString('fr-CA', {

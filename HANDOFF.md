@@ -1,5 +1,7 @@
 # HANDOFF — QCMEV.CA work log
 
+> **Priorité du 26 octobre 2026 : backend et intégrations. Lire READINESS.md et la dernière entrée ci-dessous avant de reprendre une ancienne liste.**
+
 > Read this FIRST before doing any work. Every step is committed + pushed
 > as it finishes, so the git log and this file are the source of truth.
 > Update the status column and the log at the bottom after each step.
@@ -273,3 +275,12 @@ e2e 40/40 (new L2, L3) + 2/2 after restart, login rate limit 429.
 3. Revenu Québec partner documents (SW-73, .A, .B, .D) → close `SPEC_GAPS.md` rows (#9 REM with an expired certificate, #29 ASCII form, #30 `utc`, #31–32).
 4. Product decision: keep `QCMEV_PUBLIC_REGISTRATION` open outside the simulator? Non-exportable key custody (KMS / HSM) before PROD.
 5. Run `docker compose up --build` once on a machine with Docker.
+
+
+## 2026-10-26 — Reprise backend et intégrations (fix/backend-readiness)
+
+Objectif utilisateur : continuer le logiciel jusqu’à une livraison vérifiée et lister tous les manques, sans annoncer une production fictive. Intégration de `feature/official-protocol-foodhub` (`903e9db`) avec les PDF et notes main, sans effacer les historiques. Corrections : rejeu concurrent Food Hub, remboursements concurrents/soldes de taxes atomiques, accusés MEV incomplets, numéros identiques sur deux journées hors ligne, file bornée, readiness DB, validation des paramètres, dépendances de production corrigées, routage interne Next au build, permissions et contexte Docker, calcul de l’aperçu des ventes, précontrôle empêchant une migration silencieuse de l’ancien init.
+
+Lire **READINESS.md** pour la preuve des tests et l’inventaire des neuf blocages de production. La branche n’est pas un déploiement et le simulateur n’est pas une certification officielle. Secrets de test et bases temporaires supprimés à la fin du runner. `scripts/verify-frontend-container.py` reproduit le contrôle conteneur/proxy et la CI comprend les jobs d’image; leur résultat distant doit être constaté séparément.
+
+Ne pas refaire les documents administratifs. Ne pas réinitialiser une base existante. Aucune signature, aucun courriel ou dépôt OneDrive ni appel réel de plateforme effectué. La question sur les données de production existantes est en attente; préserver les données par défaut. Aucun travail ne continue en arrière-plan après la fin de cette tâche.

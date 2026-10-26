@@ -91,7 +91,7 @@ const baseEnv = {
 };
 
 function run(name, cmd, cwd, env = baseEnv) {
-  log(`${name}: ${cmd}`);
+  log(`${name}: ${cmd.replaceAll(DATABASE_URL, '[database URL redacted]')}`);
   const started = Date.now();
   const r = spawnSync(cmd, { cwd, env, stdio: 'inherit', shell: true });
   const ok = r.status === 0;
@@ -116,7 +116,7 @@ async function waitHealth(timeoutMs = 60_000) {
   const until = Date.now() + timeoutMs;
   while (Date.now() < until) {
     try {
-      const r = await fetch(`http://127.0.0.1:${PORT}/api/health`);
+      const r = await fetch(`http://127.0.0.1:${PORT}/api/health/ready`);
       if (r.status === 200) return true;
     } catch {
       /* not up yet */
@@ -158,6 +158,7 @@ try {
 
   const npx = 'npx';
   if (!SKIP_BUILD && !run('build', 'npm run build', backend)) throw new Error('build failed');
+  if (!run('database migration preflight', 'npm run db:preflight', backend)) throw new Error('database preflight failed');
   if (!run('prisma migrate deploy', `${npx} prisma migrate deploy`, backend)) throw new Error('migrate failed');
   if (!run('migration drift (database = schema.prisma)', `${npx} prisma migrate diff --from-url "${DATABASE_URL}" --to-schema-datamodel prisma/schema.prisma --exit-code`, backend)) exitCode = 1;
   if (!run('SW-77 preparation suite (database, in-process API + simulator)', 'npm run test:integration --silent', backend, { ...baseEnv, QCMEV_DB_TESTS: '1' })) exitCode = 1;

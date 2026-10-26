@@ -1,4 +1,5 @@
 import { ConflictException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { loadConfig } from '../src/config/app-config';
 import { FoodHubSaleV1, payloadHashOf } from '../src/integrations/foodhub/foodhub.contract';
 import type { SignedRequestInfo } from '../src/integrations/foodhub/foodhub.guard';
@@ -49,6 +50,28 @@ describe('Food Hub idempotency', () => {
   it('a reused event id with another body → 409 replay_conflict', async () => {
     const h = harness(null, { eventId: 'evt_a', tenantId: 'takatak', key: body.saleKey, bodyHash: 'another-body' });
     await expect(h.svc.sale(info('b1'), body)).rejects.toMatchObject({ response: { error: 'replay_conflict' } });
+  });
+
+  it.each([
+    { bodyHash: 'another-body', tenantId: 'takatak', key: body.saleKey },
+    { bodyHash: 'b1', tenantId: 'another-tenant', key: body.saleKey },
+    { bodyHash: 'b1', tenantId: 'takatak', key: 'another-sale' },
+    null,
+  ])('rejects a conflicting event that wins a concurrent insert (%j)', async (winner) => {
+    const h = harness(null);
+    h.prisma.integrationEvent.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce(winner);
+    h.prisma.integrationEvent.create.mockRejectedValue(new Prisma.PrismaClientKnownRequestError('unique', { code: 'P2002', clientVersion: '5.22.0' }));
+    await expect(h.svc.sale(info('b1'), body)).rejects.toMatchObject({ response: { error: 'replay_conflict' } });
+    expect(h.txs.issue).not.toHaveBeenCalled();
+  });
+
+  it('replays an identical event that wins a concurrent insert', async () => {
+    const hash = payloadHashOf(body as unknown as Record<string, unknown>);
+    const h = harness({ id: 'e1', key: body.saleKey, kind: 'SALE', payloadHash: hash, transactionId: 'tx1', status: 'DONE', httpStatus: 200 });
+    h.prisma.integrationEvent.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ bodyHash: 'b1', tenantId: 'takatak', key: body.saleKey });
+    h.prisma.integrationEvent.create.mockRejectedValue(new Prisma.PrismaClientKnownRequestError('unique', { code: 'P2002', clientVersion: '5.22.0' }));
+    await expect(h.svc.sale(info('b1'), body)).resolves.toMatchObject({ httpStatus: 200, body: { status: 'accepted' } });
+    expect(h.txs.issue).not.toHaveBeenCalled();
   });
 
   it('a payloadHash that does not match the body → 422 (ContractError)', async () => {

@@ -28,7 +28,7 @@ services:
       target: dev
     environment:
       NODE_ENV: development
-      NEXT_PUBLIC_API_URL: http://qcmev-backend:3001
+      API_INTERNAL_URL: http://qcmev-backend:3001
     volumes:
       - ./frontend/src:/app/src
     # The dev stage runs: npm run dev

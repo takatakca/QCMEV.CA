@@ -28,6 +28,7 @@ import { redact, safeErrorMessage } from '../common/redact';
 import { signP256 } from '../crypto/ecdsa';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  classifyErrors,
   MevError,
   MevHeaders,
   MevRequestKind,
@@ -86,6 +87,28 @@ export function readableErrors(kind: MevRequestKind, answer: unknown): MevError[
     if (Array.isArray(env.retourTransLot)) env.retourTransLot.forEach((item) => errors.push(...listErrOf(item)));
   }
   return errors;
+}
+
+/** Never settle a queued transaction from an absent, ambiguous or incomplete success acknowledgement. */
+export function transactionAnswers(trans: TransActu[], answer: RetourTrans, status: number): RetourTransItem[] {
+  const envelope = answer?.retourTrans;
+  const globalErrors = listErrOf(envelope);
+  const rawItems = trans.length === 1 ? [envelope?.retourTransActu] : envelope?.retourTransLot;
+  const items: RetourTransItem[] = Array.isArray(rawItems) ? rawItems.filter(isObject) as RetourTransItem[] : [];
+  const uniqueNumbers = new Set(trans.map((t) => t.noTrans));
+  if (uniqueNumbers.size !== trans.length) throw new MevUnreachableError('ambiguous batch: transaction numbers must be distinct');
+  return trans.map((t, i) => {
+    const matches = items.filter((item) => item.noTrans === t.noTrans);
+    // Preserve positional replies only when they omit noTrans entirely and contain every requested item.
+    const positional = items.length === trans.length && items[i]?.noTrans === undefined ? items[i] : undefined;
+    const item = matches.length === 1 ? matches[0] : matches.length === 0 ? positional : undefined;
+    const errors = [...globalErrors, ...listErrOf(item)];
+    const listErr = status >= 400 && !errors.length ? [httpRejection(status)] : errors;
+    if (classifyErrors(listErr) === 'accepted' && (!item || typeof item.psiNoTrans !== 'string' || !item.psiNoTrans.trim())) {
+      throw new MevUnreachableError('incomplete transaction acknowledgement: no unambiguous MEV-WEB number');
+    }
+    return { ...item, listErr };
+  });
 }
 
 export interface SigningMaterial {
@@ -158,16 +181,7 @@ export class MevWebService {
     if (!trans.length) return [];
     const body: ReqTrans = { reqTrans: trans.length === 1 ? { transActu: trans[0] } : { transLot: trans } };
     const { status, data } = await this.post<RetourTrans>('TRX', op.id, this.signedHeaders(m), body, m);
-    const r = data?.retourTrans ?? {};
-    const globalErrors = r.listErr ?? [];
-    const items = trans.length === 1 ? [r.retourTransActu ?? {}] : r.retourTransLot ?? [];
-    return trans.map((t, i) => {
-      const item = items.find((x) => x?.noTrans === t.noTrans) ?? items[i] ?? {};
-      const listErr = [...globalErrors, ...(item.listErr ?? [])];
-      // A 4xx is never "accepted": in a batch answer, a transaction left without an error of its own is rejected with
-      // the HTTP error, even when another transaction of the same answer carries real errors.
-      return { ...item, listErr: status >= 400 && !listErr.length ? [httpRejection(status)] : listErr };
-    });
+    return transactionAnswers(trans, data, status);
   }
 
   async documentRequest(op: OperatorIdentity, m: SigningMaterial, reqDoc: ReqDoc): Promise<RetourDoc> {
@@ -226,7 +240,6 @@ export class MevWebService {
     // nothing was recorded, so nothing is accepted; the transactions stay queued and are sent again.
     if (res.status < 400 && !hasEnvelope) return unreachable(res.status, 'NOT_MEV_ANSWER', `HTTP ${res.status} without ${envelope}`);
 
-    this.lastOkAt = new Date();
     let data = answer as T;
     // Decided on the lists the callers read (readableErrors), never on a listErr found elsewhere in the body.
     let errors = readableErrors(kind, answer);
@@ -236,6 +249,15 @@ export class MevWebService {
       errors = [httpRejection(res.status)];
       data = { ...(isObject(answer) ? answer : {}), [envelope]: { ...inner, listErr: errors } } as T;
     }
+    if (kind === 'TRX' && res.status < 400) {
+      const request = (body as ReqTrans).reqTrans;
+      try {
+        transactionAnswers(request.transActu ? [request.transActu] : request.transLot ?? [], data as RetourTrans, res.status);
+      } catch {
+        return unreachable(res.status, 'INCOMPLETE_ACK', 'incomplete or ambiguous transaction acknowledgement');
+      }
+    }
+    this.lastOkAt = new Date();
     const listErr = errors.length ? String(errors[0]?.codRetour ?? 'ERR') : null;
     await this.prisma.mevRequestLog.update({
       where: { id: log.id },

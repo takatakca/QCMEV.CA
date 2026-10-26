@@ -10,6 +10,7 @@
  *  - public operator self-registration (POST /api/operators/register) is ON unless QCMEV_PUBLIC_REGISTRATION=false.
  */
 import type { LogLevel } from '@nestjs/common';
+import type { JwtSignOptions } from '@nestjs/jwt';
 
 export type MevEnv = 'SIMULATOR' | 'DEV' | 'ESSAI' | 'PROD';
 export const MEV_ENVS: MevEnv[] = ['SIMULATOR', 'DEV', 'ESSAI', 'PROD'];
@@ -40,7 +41,7 @@ export interface AppConfig {
   simulatorEnabled: boolean;
   simulatorStateDir: string;
   jwtSecret: string;
-  jwtExpiresIn: string;
+  jwtExpiresIn: NonNullable<JwtSignOptions['expiresIn']>;
   keyEncryptionKey: Buffer;
   sev: SevIdentity;
   certificationNumber: string;
@@ -120,13 +121,24 @@ function positiveInt(env: NodeJS.ProcessEnv, name: string, fallback: number): nu
   return n;
 }
 
+function jwtDuration(raw: string | undefined): NonNullable<JwtSignOptions['expiresIn']> {
+  const value = raw?.trim() || '8h';
+  if (!/^[1-9]\d*(?:ms|s|m|h|d|w|y)$/.test(value)) throw new ConfigError('JWT_EXPIRES_IN must be a positive duration with units, e.g. 8h or 30m');
+  return value as NonNullable<JwtSignOptions['expiresIn']>;
+}
+
+function nonNegativeInt(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  if ((env[name] ?? '').trim() === '0') return 0; // documented switch for tests / manual queue processing
+  return positiveInt(env, name, fallback);
+}
+
 function list(raw: string | undefined): string[] {
   return (raw ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
-  const port = Number(env.PORT ?? 3001);
-  if (!Number.isInteger(port) || port <= 0) throw new ConfigError('PORT must be a positive integer');
+  const port = positiveInt(env, 'PORT', 3001);
+  if (port > 65535) throw new ConfigError('PORT must not exceed 65535');
 
   const mevEnvironment = (env.MEV_ENVIRONMENT ?? 'SIMULATOR').trim().toUpperCase() as MevEnv;
   if (!MEV_ENVS.includes(mevEnvironment)) {
@@ -209,12 +221,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       TRX: env.MEV_PATH_TRX?.trim() || '/transaction',
       DOC: env.MEV_PATH_DOC?.trim() || '/document',
     },
-    mevTimeoutMs: Number(env.MEV_TIMEOUT_MS ?? 10000),
+    mevTimeoutMs: positiveInt(env, 'MEV_TIMEOUT_MS', 10000),
     qrBaseUrl,
     simulatorEnabled,
     simulatorStateDir: (env.MEV_SIMULATOR_STATE_DIR ?? '').trim(),
     jwtSecret,
-    jwtExpiresIn: env.JWT_EXPIRES_IN?.trim() || '8h',
+    jwtExpiresIn: jwtDuration(env.JWT_EXPIRES_IN),
     keyEncryptionKey,
     sev,
     certificationNumber,
@@ -224,10 +236,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       enabled: foodhubEnabled,
       secrets,
       integrationIds: list(env.QCMEV_FOODHUB_INTEGRATION_IDS).length ? list(env.QCMEV_FOODHUB_INTEGRATION_IDS) : ['foodhub', 'on2go_hub'],
-      ratePerSecond: Number(env.QCMEV_FOODHUB_RATE_PER_SECOND ?? 20),
+      ratePerSecond: positiveInt(env, 'QCMEV_FOODHUB_RATE_PER_SECOND', 20),
     },
     frontendOrigins: list(env.FRONTEND_URL).length ? list(env.FRONTEND_URL) : ['http://localhost:3000'],
-    offlineFlushSeconds: Number(env.MEV_OFFLINE_FLUSH_SECONDS ?? 30),
+    offlineFlushSeconds: nonNegativeInt(env, 'MEV_OFFLINE_FLUSH_SECONDS', 30),
     certRenewalDays: positiveInt(env, 'CERT_RENEWAL_DAYS', 30),
     simulatorCertValidityDays: positiveInt(env, 'SIMULATOR_CERT_VALIDITY_DAYS', 730),
     publicRegistration: bool(env.QCMEV_PUBLIC_REGISTRATION, true),
