@@ -1,5 +1,7 @@
 # Takatak MEV (QCMEV)
 
+> État vérifié et limites de déploiement : lire [`READINESS.md`](READINESS.md) avant toute mise en ligne.
+
 Sales recording system (SEV, « système d'enregistrement des ventes ») for Québec restaurants, built to talk to Revenu
 Québec's WEB-SRM (MEV-WEB) in mode SEV (it creates and signs its own transactions), and to receive the orders of TAKATAK Food Hub (Uber Eats, DoorDash,
 SkipTheDishes, Too Good To Go, website, phone, storefront).
@@ -10,7 +12,7 @@ SkipTheDishes, Too Good To Go, website, phone, storefront).
 > (`MEV_ENVIRONMENT=PROD`) refuses to start without a certification number. See [`SPEC_GAPS.md`](SPEC_GAPS.md) and
 > [`CERTIFICATION.md`](CERTIFICATION.md).
 
-This repository is public: it contains no secret, no certificate, no key, no authorization code and no identity number.
+This repository is public. Runtime credentials, private keys and authorization codes must remain outside Git. Administrative documents supplied by the owner are under `docs/revenu-quebec`.
 Tests use obvious placeholders (`XXXX-XXXX`, `ER0000`, `0000000000TQ0001`).
 
 ## What it does
@@ -64,8 +66,8 @@ SW-73: every such place is marked `SPEC` (or `S1` for the 2022 sample code) in t
 ## Layout
 
 ```
-backend/                 NestJS 10 + Prisma 5 + PostgreSQL 16
-  prisma/                schema.prisma + ONE init migration (migrations/20261024000000_init)
+backend/                 NestJS 11 + Prisma 5 + PostgreSQL 16
+  prisma/                schema.prisma + init and subsequent migrations; db:preflight refuses an incompatible legacy init
   src/config/            validated configuration (refuses weak / missing secrets, PROD without certification)
   src/crypto/            AES-256-GCM key vault, ECDSA P-256, CSR, QR encryption
   src/certificates/      CRT AJO / REM, certificate lifecycle + nightly renewal
@@ -79,7 +81,7 @@ backend/                 NestJS 10 + Prisma 5 + PostgreSQL 16
   src/simulator/         local WEB-SRM test double (never mounted in ESSAI / PROD)
   src/cli/seed-operator.ts   first operator, devices, users, location mappings from a file outside git
   test/                  Jest unit tests; test/sw77/ = SW-77 preparation suite (database, QCMEV_DB_TESTS=1)
-frontend/                Next.js 14.2 dashboard (staff routes only)
+frontend/                Next.js 15.5 dashboard (staff routes only)
 scripts/run-test-cases.ts      12 internal scenarios (NOT SW-77)
 scripts/verify-foodhub-e2e.ts  Food Hub → QCMEV end-to-end checks
 tools/local-run/         Docker-free local run: embedded PostgreSQL + backend + simulator + all checks
@@ -105,7 +107,7 @@ hash chain recompute, no identity value or secret in the logs). Our simulator on
 ## Run it with Docker (Coolify)
 
 ```bash
-cp backend/.env.example .env    # fill it: openssl rand -hex 32 for each secret; never commit it
+cp backend/.env.example .env    # preserve existing .env; for a new install only. Fill it: openssl rand -hex 32 for each secret; never commit it
 docker compose up -d --build    # backend runs prisma migrate deploy then node dist/main.js
 # development (hot reload, SIMULATOR): docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 docker compose exec qcmev-backend sh -c 'SEED_FILE=/run/secrets/seed.json node dist/cli/seed-operator.js'
@@ -137,6 +139,7 @@ checked (ADMIN, MANAGER, CASHIER).
 | Route | Role | Purpose |
 |---|---|---|
 | `GET /health` | public | liveness (no data) |
+| `GET /health/ready` | public | database readiness, 503 if unavailable |
 | `POST /auth/login` | public | JWT (10 attempts / minute) |
 | `POST /operators/register` | public | first-time setup: operator + first admin (5 / minute; can be turned off) |
 | `GET /operators/me`, `GET /operators/mev-status` | staff | operator (no identity numbers), MEV status |

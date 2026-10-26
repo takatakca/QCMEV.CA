@@ -28,6 +28,14 @@ La branche `fix/backend-readiness` réunit les documents administratifs de `main
 | Aperçu de facture différent du calcul en cents du backend | Arrondis des lignes puis des bases de taxes alignés et comparés au calcul réel du backend; option de paiement MOBILE non prise en charge retirée, modes chèque et mixte proposés |
 | Journal du runner susceptible d’afficher l’URL avec mot de passe temporaire | URL masquée dans la commande affichée; secrets de test conservés hors dépôt puis supprimés |
 
+## Résultats mesurés le 26 octobre
+
+- **203 tests unitaires passés**; les 24 tests de base sont ignorés par cette commande puis exécutés séparément.
+- **24/24 tests avec PostgreSQL passés**, dont concurrence, changement de journée et protection de l’ancien schéma.
+- **40/40 contrôles Food Hub, puis 2/2 après redémarrage**, scénarios internes et limitation de connexion passés.
+- Typage, lint et builds backend/frontend passés. Audits des dépendances de production : **0 vulnérabilité connue** pour chaque composant.
+- Installation reproductible exécutée avec les lockfiles; la première CI Node 22/npm 10 a ensuite identifié une entrée Webpack manquante, non détectée par npm 11 local. Lockfile réparé avec npm 10.9.9 et installation gelée simulée avec succès dans Node 22. Résultats CI distants à suivre séparément.
+
 ## Vérifications et portée
 
 - Compilation, typage et lint backend; tests unitaires.

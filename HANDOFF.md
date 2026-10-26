@@ -284,3 +284,8 @@ Objectif utilisateur : continuer le logiciel jusqu’à une livraison vérifiée
 Lire **READINESS.md** pour la preuve des tests et l’inventaire des neuf blocages de production. La branche n’est pas un déploiement et le simulateur n’est pas une certification officielle. Secrets de test et bases temporaires supprimés à la fin du runner. `scripts/verify-frontend-container.py` reproduit le contrôle conteneur/proxy et la CI comprend les jobs d’image; leur résultat distant doit être constaté séparément.
 
 Ne pas refaire les documents administratifs. Ne pas réinitialiser une base existante. Aucune signature, aucun courriel ou dépôt OneDrive ni appel réel de plateforme effectué. La question sur les données de production existantes est en attente; préserver les données par défaut. Aucun travail ne continue en arrière-plan après la fin de cette tâche.
+
+
+### Résultats et installation distante
+
+Parcours complet du 26 octobre : 203 tests unitaires + 24 tests DB exécutés séparément, 40+2 contrôles Food Hub, précontrôle/migrations/dérive, CRT/UTL, redémarrage et limitation : tout passe localement. Frontend Docker construit et démarré, transport HTTP du proxy vérifié. Audits de production 0/0. Première CI sur `5bf6567` : échec npm ci backend sur Node 22/npm 10 (entrée Webpack imbriquée manquante), malgré réussite npm 11 locale. Reproduit dans Node 22, lockfile corrigé par npm 10.9.9, dry-run gelé réussi; nouvelle CI nécessaire. Image backend toujours à confirmer hors du blocage HTTP 403 Alpine local.

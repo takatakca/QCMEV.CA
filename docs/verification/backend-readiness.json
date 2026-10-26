@@ -134,5 +134,10 @@
     "configuration_validation": "passed for standard and development with temporary non-production credentials",
     "full_stack_run": "not executed"
   },
-  "remote_ci": "not yet observed"
+  "remote_ci": "not yet observed",
+  "installation": {
+    "current_instance_full_install_and_build_script": "passed",
+    "node22_npm10_frozen_install_dry_run": "passed after fixing missing nested Webpack lock entry",
+    "initial_remote_ci": "40409823008: backend npm ci failed; fix reproduced and committed subsequently"
+  }
 }
