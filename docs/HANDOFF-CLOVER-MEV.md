@@ -7,6 +7,11 @@ connector cannot edit a doc: each update is a new doc with the newest time in it
 If they differ, GitHub wins.
 
 ## LIVE STATUS (newest first — read this line, then continue)
+- 2026-10-27 night (5) — **#7 key custody: design note written, code waits for the owner's choice.**
+  `docs/revenu-quebec/KEY_CUSTODY.md` (QCMEV): the 6 places the device key is used, the interface, provider table,
+  recommendation (Google Cloud KMS, HSM level, Montréal region), questions for RQ, ~1 day of code after the choice.
+  The key is never used for TLS, so a remote KMS works. **Next (no owner input needed):** nothing blocking in code;
+  waiting on the owner for: RQ dossier, Clover dashboard + key + Dev Kit test, KMS provider, "open the PR".
 - 2026-10-27 night (4) — **Review of the device endpoint + Android app DONE.** Server routes (receipt / print / copy)
   OK: merchant-scoped, print granted once, answer format matches the app. One fix in the app (Food Hub, see
   `apps/clover-mev-android` log): a split bill (several payments) now prints at its last payment instead of waiting in
@@ -55,7 +60,7 @@ environment yet.** Do not tell RQ it is "guaranteed error-free": ask for the nex
 | 4 | DEV/ESSAI access, SW-73 documents, personalized SW-77 cases | ❌ RQ gives them after step 3 | RQ |
 | 5 | SW-77 cases run in ESSAI + official demonstration video | ❌ needs step 4 | code + owner |
 | 6 | RQ certification / attestation | ❌ needs step 5 | RQ |
-| 7 | Private-key custody in KMS/HSM (PROD is refused without it) | ❌ not built (owner picks the provider) | code + owner |
+| 7 | Private-key custody in KMS/HSM (PROD is refused without it) | ❌ not built; design ready (`docs/revenu-quebec/KEY_CUSTODY.md`), waits for the owner's provider choice | owner, then code |
 | 8 | Food Hub sends its sales to QCMEV (PR #99) | ✅ done, 617/617 e2e | code |
 | 9 | Clover register sales → invoices (feature/mev-clover-register) | ✅ done, tests green; PR not opened (needs owner OK) | code |
 | 10 | TAKATAK MEV Clover app: backend (OAuth, webhook, device endpoint) | ✅ done | code |
