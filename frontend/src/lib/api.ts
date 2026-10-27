@@ -49,6 +49,13 @@ export function withDollars(tx: any) {
 
 // Auth
 export const login = (username: string, password: string) => api.post('/auth/login', { username, password });
+/**
+ * localStorage key: the Food Hub kitchen a merchant coming from TAKATAK MEV on Clover must link ({ tenantId, locationId }),
+ * kept by the sign-up page and used to pre-fill « Cuisines Food Hub » on the Devices page.
+ */
+export const FOODHUB_LINK_KEY = 'takatak_foodhub_link';
+/** Public first-time setup: the operator (business) and its first ADMIN (POST /api/operators/register). */
+export const registerOperator = (body: Record<string, string | undefined>) => api.post('/operators/register', body);
 
 // Operator
 export const getMe = () => api.get('/operators/me');

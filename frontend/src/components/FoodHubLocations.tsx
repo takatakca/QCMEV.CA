@@ -4,7 +4,7 @@
  * Linking also creates the FOODHUB-AUTO system user and registers it with MEV-WEB once a device is certified.
  */
 import React, { useEffect, useState } from 'react';
-import { linkFoodHubLocation, listFoodHubLocations, unlinkFoodHubLocation } from '../lib/api';
+import { FOODHUB_LINK_KEY, linkFoodHubLocation, listFoodHubLocations, unlinkFoodHubLocation } from '../lib/api';
 
 interface Props { devices: Array<{ id: string; name?: string | null; serialNumber: string; isActive?: boolean }>; }
 
@@ -25,6 +25,14 @@ export default function FoodHubLocations({ devices }: Props) {
       .catch((err: any) => setError(err.response?.data?.message ?? 'Impossible de charger les cuisines Food Hub'));
   };
   useEffect(() => { load(); }, []);
+  // Coming from TAKATAK MEV on Clover (sign-up page): the merchant's own Food Hub kitchen code is filled in.
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(FOODHUB_LINK_KEY) ?? 'null');
+      if (typeof saved?.tenantId === 'string') setTenantId(saved.tenantId);
+      if (typeof saved?.locationId === 'string') setLoc(saved.locationId);
+    } catch { /* nothing saved */ }
+  }, []);
 
   const active = devices.filter((d) => d.isActive !== false);
   const message = (err: any, fallback: string) => {
@@ -44,6 +52,7 @@ export default function FoodHubLocations({ devices }: Props) {
         ? `Cuisine ${r.data.locationId} liée. Utilisateur FOODHUB-AUTO inscrit au MEV-WEB.`
         : `Cuisine ${r.data.locationId} liée. FOODHUB-AUTO sera inscrit au MEV-WEB après la demande de certificat de l’appareil.`);
       setLoc('');
+      try { localStorage.removeItem(FOODHUB_LINK_KEY); } catch { /* nothing saved */ }
       load();
     } catch (err: any) {
       setError(message(err, 'Erreur lors de la liaison'));
