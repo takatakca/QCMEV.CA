@@ -1,6 +1,41 @@
 # HANDOFF — Revenu Québec (QCMEV) + Clover + Food Hub — 2026-10-27
 
 Read this first. Any agent or person can continue from here. Nothing below is merged into `main` (the owner merges).
+The same text lives in 3 places, updated together: QCMEV.CA `docs/HANDOFF-CLOVER-MEV.md`, foodhubca
+`docs/HANDOFF-CLOVER-MEV.md`, and the Google Drive doc « HANDOFF — QCMEV + Clover + Food Hub (2026-10-27) ».
+
+## LIVE STATUS (newest first — read this line, then continue)
+- 2026-10-27 evening — **review pass of my own code, in progress.** Done in it: the Clover register catch-up poll now
+  reads oldest change first and resumes after the last order read when it hits its page limit (before: a merchant with
+  > 1000 changed orders between two polls could have sales skipped). 2 new tests, 21/21 pass. Commit: see foodhubca
+  `feature/mev-clover-register` log. **Next:** finish the review (device endpoint, Android app), release-signing config
+  for the APK (keystore stays with the owner), then the open code items in "NOT DONE" step 7.
+
+## IS IT "100 % CERTIFIED"? — honest checklist (owner asked 2026-10-27)
+**No. Nobody but Revenu Québec can certify it, and it has not been tested on a real Clover device or in RQ's ESSAI
+environment yet.** Do not tell RQ it is "guaranteed error-free": ask for the next step (DEV/ESSAI access, SW-77 cases).
+
+| # | Item | State | Who |
+|---|---|---|---|
+| 1 | SEV built: official MEV-WEB protocol, ECDSA signing, offline mode, credit notes, RPR/DUP, user report (QCMEV `fix/backend-readiness` + `claude/nice-cray-4fhekg`) | ✅ done, 205 unit tests + full local run green | code |
+| 2 | Rehearsal video (simulator, fake data) | ✅ done | code |
+| 3 | SW-10 dossier sent to RQ | ❌ not sent | owner |
+| 4 | DEV/ESSAI access, SW-73 documents, personalized SW-77 cases | ❌ RQ gives them after step 3 | RQ |
+| 5 | SW-77 cases run in ESSAI + official demonstration video | ❌ needs step 4 | code + owner |
+| 6 | RQ certification / attestation | ❌ needs step 5 | RQ |
+| 7 | Private-key custody in KMS/HSM (PROD is refused without it) | ❌ not built (owner picks the provider) | code + owner |
+| 8 | Food Hub sends its sales to QCMEV (PR #99) | ✅ done, 617/617 e2e | code |
+| 9 | Clover register sales → invoices (feature/mev-clover-register) | ✅ done, tests green; PR not opened (needs owner OK) | code |
+| 10 | TAKATAK MEV Clover app: backend (OAuth, webhook, device endpoint) | ✅ done | code |
+| 11 | TAKATAK MEV Android app (prints invoice + QR) | ✅ builds, 8/8 tests; ❌ never run on a real Clover device | code + owner (Dev Kit) |
+| 12 | Release-signed APK | ❌ debug only (the keystore must be the owner's) | code + owner |
+| 13 | App created in the Clover developer dashboard, env in Coolify, APK uploaded, Clover's app review | ❌ | owner |
+| 14 | Self-serve onboarding of App Market merchants (today: by hand per merchant) | ❌ not built | code |
+| 15 | Merged and deployed | ❌ owner merges (order in step 5 below) | owner |
+
+Questions to put to RQ in writing: (a) is a Clover-register intake through Food Hub inside the certified product;
+(b) a tip added after the bill is printed (Clover "tip adjust"): today the SEV credits the bill and issues a corrected
+one — is that what RQ expects?
 
 ## The goal (owner's words)
 Complete everything Revenu Québec needs (they will ask for a demonstration video), put the solution on Clover so it can
