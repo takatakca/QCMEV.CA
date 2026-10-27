@@ -7,6 +7,14 @@ connector cannot edit a doc: each update is a new doc with the newest time in it
 If they differ, GitHub wins.
 
 ## LIVE STATUS (newest first — read this line, then continue)
+- 2026-10-27 night (3) — **#12 done + 2 real Android bugs fixed** (Food Hub, see `apps/clover-mev-android` log). Clover's
+  own rules (docs.clover.com « Set up Android SDK versions », « Generate a signed APK »): targetSdk ≤ 25 and v1-only
+  signing. The app targeted 34: (a) from 26 the manifest receiver never gets the implicit PAYMENT_PROCESSED broadcast →
+  no automatic print; (b) from 27 the account policy blocks CloverAuth; (c) Clover would refuse the upload. Now
+  targetSdk 25; release signed v1 only (`META-INF/CERT.RSA`) with the owner's keystore from env / gradle.properties
+  (never in git; `*.jks` ignored); verified with a throwaway key (deleted): `apksigner` v1 true, v2/v3/v4 false.
+  Owner steps: `apps/clover-mev-android/README.md` « Release APK ». **Next:** finish the review of the device endpoint
+  + Android code, then #7 KMS/HSM design (owner picks the provider).
 - 2026-10-27 night (2) — **#14 self-serve onboarding DONE and proven end to end on the simulator.** Docs: Food Hub
   `a3db978`. Checks: Food Hub typecheck, lint 0 errors, 1728 tests, `next build --webpack`, `verify:foodhub` 617/0;
   QCMEV dashboard typecheck, lint, `next build`. Real browser (`tools/demo-video/check-signup.mjs`, QCMEV `483d6bf`):
@@ -47,7 +55,7 @@ environment yet.** Do not tell RQ it is "guaranteed error-free": ask for the nex
 | 9 | Clover register sales → invoices (feature/mev-clover-register) | ✅ done, tests green; PR not opened (needs owner OK) | code |
 | 10 | TAKATAK MEV Clover app: backend (OAuth, webhook, device endpoint) | ✅ done | code |
 | 11 | TAKATAK MEV Android app (prints invoice + QR) | ✅ builds, 8/8 tests; ❌ never run on a real Clover device | code + owner (Dev Kit) |
-| 12 | Release-signed APK | ❌ debug only (the keystore must be the owner's) | code + owner |
+| 12 | Release-signed APK | ✅ build set up to Clover's rules (v1 only, CERT.RSA, targetSdk 25), checked with a throwaway key; ❌ the owner makes the real key and the upload | code ✅ + owner |
 | 13 | App created in the Clover developer dashboard, env in Coolify, APK uploaded, Clover's app review | ❌ | owner |
 | 14 | Self-serve onboarding of App Market merchants | ✅ built; proven end to end on the simulator (browser 15/15 + live Food Hub → QCMEV 2/2); ❌ never tried with a real Clover merchant | code + owner |
 | 15 | Merged and deployed | ❌ owner merges (order in step 5 below) | owner |
