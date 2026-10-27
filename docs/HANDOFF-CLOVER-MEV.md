@@ -5,6 +5,15 @@ The same text lives in 3 places, updated together: QCMEV.CA `docs/HANDOFF-CLOVER
 `docs/HANDOFF-CLOVER-MEV.md`, and the Google Drive doc « HANDOFF — QCMEV + Clover + Food Hub (2026-10-27) ».
 
 ## LIVE STATUS (newest first — read this line, then continue)
+- 2026-10-27 night — **#14 self-serve onboarding: code done and pushed, docs + build checks in progress.**
+  Food Hub `50509e0` (`lib/foodhub/mev/clover-merchants.ts`, gate in `mev/config.ts`, `registerPlace` in
+  `clover-register.ts`, welcome page steps, route `POST /api/foodhub/mev/clover-merchant`, 5 tests; full suite
+  1728/1728, typecheck + lint clean). QCMEV `cc61264` (dashboard `/register` sign-up page; « Cuisines Food Hub »
+  pre-filled; typecheck + lint clean). How it works: approved App Market merchant → welcome page gives it a private code
+  `CLV_…` → it signs up in Takatak MEV, adds its Clover register (RQ file number + authorization code), requests the
+  certificate, links the code → Food Hub turns it on when QCMEV /health says ready. New env: `FOODHUB_MEV_DASHBOARD_URL`.
+  **Next:** docs (`docs/MEV_INTEGRATION.md` § 10, `docs/CLOVER_MULTI_APP.md` § TAKATAK MEV, `.env.example`), then
+  `rm -rf .next && npx next build --webpack` and `npm run verify:foodhub`, then the QCMEV dashboard `next build`.
 - 2026-10-27 evening — **review pass of my own code, in progress.** Done in it: the Clover register catch-up poll now
   reads oldest change first and resumes after the last order read when it hits its page limit (before: a merchant with
   > 1000 changed orders between two polls could have sales skipped). 2 new tests, 21/21 pass. Commit: see foodhubca
@@ -30,7 +39,7 @@ environment yet.** Do not tell RQ it is "guaranteed error-free": ask for the nex
 | 11 | TAKATAK MEV Android app (prints invoice + QR) | ✅ builds, 8/8 tests; ❌ never run on a real Clover device | code + owner (Dev Kit) |
 | 12 | Release-signed APK | ❌ debug only (the keystore must be the owner's) | code + owner |
 | 13 | App created in the Clover developer dashboard, env in Coolify, APK uploaded, Clover's app review | ❌ | owner |
-| 14 | Self-serve onboarding of App Market merchants (today: by hand per merchant) | ❌ not built | code |
+| 14 | Self-serve onboarding of App Market merchants | ✅ built + tested (Food Hub `50509e0`, QCMEV `cc61264`); ❌ never tried with a real merchant | code + owner |
 | 15 | Merged and deployed | ❌ owner merges (order in step 5 below) | owner |
 
 Questions to put to RQ in writing: (a) is a Clover-register intake through Food Hub inside the certified product;
