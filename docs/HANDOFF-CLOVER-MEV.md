@@ -7,6 +7,11 @@ connector cannot edit a doc: each update is a new doc with the newest time in it
 If they differ, GitHub wins.
 
 ## LIVE STATUS (newest first — read this line, then continue)
+- 2026-10-27 night (4) — **Review of the device endpoint + Android app DONE.** Server routes (receipt / print / copy)
+  OK: merchant-scoped, print granted once, answer format matches the app. One fix in the app (Food Hub, see
+  `apps/clover-mev-android` log): a split bill (several payments) now prints at its last payment instead of waiting in
+  a retry pause (REPLACE + the replaced job stops); 9/9 unit tests. **Next:** #7 KMS/HSM key custody — needs the
+  owner's provider choice (Google Cloud KMS, AWS KMS, Azure Key Vault, or an HSM); design note to write in QCMEV.
 - 2026-10-27 night (3) — **#12 done + 2 real Android bugs fixed** (Food Hub, see `apps/clover-mev-android` log). Clover's
   own rules (docs.clover.com « Set up Android SDK versions », « Generate a signed APK »): targetSdk ≤ 25 and v1-only
   signing. The app targeted 34: (a) from 26 the manifest receiver never gets the implicit PAYMENT_PROCESSED broadcast →
