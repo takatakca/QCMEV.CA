@@ -40,6 +40,22 @@ QCMEV_DEMO_DIR=<dossier> node tools/demo-video/record.mjs   # terminal 2 (Playwr
 `QCMEV_DEMO_PACE=0.2` fait un essai rapide. Le dossier de travail (base, secrets jetables, journaux, vidéo) est
 toujours hors du dépôt.
 
+## Vérifier l'inscription d'un restaurant (TAKATAK MEV sur Clover)
+
+Le parcours qu'un restaurant suit seul depuis l'App Market Clover, dans un vrai navigateur : création du compte
+(`/register`, avec le code de cuisine Food Hub reçu sur Clover), caisse inscrite, certificat, cuisine liée, les trois
+indicateurs « prête » que Food Hub lit dans `/health`. NEQ, utilisateur et code aléatoires à chaque essai.
+
+```sh
+QCMEV_FOODHUB_ENABLED=true QCMEV_FOODHUB_SECRET=$(openssl rand -hex 32) node tools/demo-video/stack.mjs   # terminal 1
+node tools/demo-video/check-signup.mjs <dossier>/demo.json <dossier des captures>                         # terminal 2
+```
+
+Puis, côté Food Hub (dépôt foodhubca), la vente de caisse de ce restaurant jusqu'au vrai SEV et son remboursement :
+`FOODHUB_LIVE_QCMEV_URL=http://127.0.0.1:3101 FOODHUB_LIVE_QCMEV_SECRET=<le même secret>
+FOODHUB_LIVE_QCMEV_LOCATION=<le code CLV_… affiché> npx vitest run tests/mev-qcmev-live.test.ts`.
+Essai du 2026-10-27 (simulateur) : 15/15 dans le navigateur, puis 2/2 côté Food Hub.
+
 ## Pour la démonstration officielle
 
 Quand Revenu Québec aura fourni l'accès ESSAI et les cas SW-77 personnalisés : pointer le SEV vers ESSAI (identifiants

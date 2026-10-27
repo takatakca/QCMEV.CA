@@ -95,46 +95,46 @@ export default function RegisterPage() {
           <fieldset className="space-y-3">
             <legend className="font-semibold text-gray-900 mb-1">L'entreprise</legend>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Nom légal ou commercial</label>
-              <input value={f.name} onChange={set('name')} required maxLength={200} className={field} />
+              <label htmlFor="reg-name" className="block text-sm font-medium text-gray-700 mb-1">Nom légal ou commercial</label>
+              <input id="reg-name" name="name" value={f.name} onChange={set('name')} required maxLength={200} className={field} />
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">NEQ (10 chiffres)</label>
-                <input value={f.neq} onChange={set('neq')} required inputMode="numeric" pattern="\s*\d{10}\s*" className={`${field} font-mono`} />
+                <label htmlFor="reg-neq" className="block text-sm font-medium text-gray-700 mb-1">NEQ (10 chiffres)</label>
+                <input id="reg-neq" name="neq" value={f.neq} onChange={set('neq')} required inputMode="numeric" pattern="\s*\d{10}\s*" className={`${field} font-mono`} />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">No TPS</label>
-                <input value={f.noTPS} onChange={set('noTPS')} required placeholder="123456789RT0001" className={`${field} font-mono`} />
+                <label htmlFor="reg-noTPS" className="block text-sm font-medium text-gray-700 mb-1">No TPS</label>
+                <input id="reg-noTPS" name="noTPS" value={f.noTPS} onChange={set('noTPS')} required placeholder="123456789RT0001" className={`${field} font-mono`} />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">No TVQ</label>
-                <input value={f.noTVQ} onChange={set('noTVQ')} required placeholder="1234567890TQ0001" className={`${field} font-mono`} />
+                <label htmlFor="reg-noTVQ" className="block text-sm font-medium text-gray-700 mb-1">No TVQ</label>
+                <input id="reg-noTVQ" name="noTVQ" value={f.noTVQ} onChange={set('noTVQ')} required placeholder="1234567890TQ0001" className={`${field} font-mono`} />
               </div>
             </div>
             <p className="text-xs text-gray-500">Les numéros de TPS et de TVQ sont écrits dans le certificat de chaque appareil : ils ne changent plus après la première demande de certificat.</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="sm:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Adresse</label>
-                <input value={f.address} onChange={set('address')} maxLength={300} className={field} />
+                <label htmlFor="reg-address" className="block text-sm font-medium text-gray-700 mb-1">Adresse</label>
+                <input id="reg-address" name="address" value={f.address} onChange={set('address')} maxLength={300} className={field} />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Code postal</label>
-                <input value={f.postalCode} onChange={set('postalCode')} placeholder="H2X 1Y4" className={field} />
+                <label htmlFor="reg-postalCode" className="block text-sm font-medium text-gray-700 mb-1">Code postal</label>
+                <input id="reg-postalCode" name="postalCode" value={f.postalCode} onChange={set('postalCode')} placeholder="H2X 1Y4" className={field} />
               </div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Ville</label>
-                <input value={f.city} onChange={set('city')} maxLength={100} className={field} />
+                <label htmlFor="reg-city" className="block text-sm font-medium text-gray-700 mb-1">Ville</label>
+                <input id="reg-city" name="city" value={f.city} onChange={set('city')} maxLength={100} className={field} />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Téléphone</label>
-                <input value={f.phone} onChange={set('phone')} maxLength={30} className={field} />
+                <label htmlFor="reg-phone" className="block text-sm font-medium text-gray-700 mb-1">Téléphone</label>
+                <input id="reg-phone" name="phone" value={f.phone} onChange={set('phone')} maxLength={30} className={field} />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Courriel</label>
-                <input type="email" value={f.email} onChange={set('email')} maxLength={200} className={field} />
+                <label htmlFor="reg-email" className="block text-sm font-medium text-gray-700 mb-1">Courriel</label>
+                <input id="reg-email" name="email" type="email" value={f.email} onChange={set('email')} maxLength={200} className={field} />
               </div>
             </div>
           </fieldset>
@@ -143,26 +143,26 @@ export default function RegisterPage() {
             <legend className="font-semibold text-gray-900 mb-1">Le gérant (premier administrateur)</legend>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Prénom</label>
-                <input value={f.adminFirstName} onChange={set('adminFirstName')} maxLength={100} className={field} />
+                <label htmlFor="reg-adminFirstName" className="block text-sm font-medium text-gray-700 mb-1">Prénom</label>
+                <input id="reg-adminFirstName" name="adminFirstName" value={f.adminFirstName} onChange={set('adminFirstName')} maxLength={100} className={field} />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Nom</label>
-                <input value={f.adminLastName} onChange={set('adminLastName')} maxLength={100} className={field} />
+                <label htmlFor="reg-adminLastName" className="block text-sm font-medium text-gray-700 mb-1">Nom</label>
+                <input id="reg-adminLastName" name="adminLastName" value={f.adminLastName} onChange={set('adminLastName')} maxLength={100} className={field} />
               </div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Nom d'utilisateur</label>
-              <input value={f.adminUsername} onChange={set('adminUsername')} required autoComplete="username" pattern="[A-Za-z0-9._@\-]{3,60}" className={field} />
+              <label htmlFor="reg-adminUsername" className="block text-sm font-medium text-gray-700 mb-1">Nom d'utilisateur</label>
+              <input id="reg-adminUsername" name="adminUsername" value={f.adminUsername} onChange={set('adminUsername')} required autoComplete="username" pattern="[A-Za-z0-9._@\-]{3,60}" className={field} />
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Mot de passe (12 caractères ou plus)</label>
-                <input type="password" value={f.adminPassword} onChange={set('adminPassword')} required minLength={12} autoComplete="new-password" className={field} />
+                <label htmlFor="reg-adminPassword" className="block text-sm font-medium text-gray-700 mb-1">Mot de passe (12 caractères ou plus)</label>
+                <input id="reg-adminPassword" name="adminPassword" type="password" value={f.adminPassword} onChange={set('adminPassword')} required minLength={12} autoComplete="new-password" className={field} />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Confirmer le mot de passe</label>
-                <input type="password" value={f.confirm} onChange={set('confirm')} required minLength={12} autoComplete="new-password" className={field} />
+                <label htmlFor="reg-confirm" className="block text-sm font-medium text-gray-700 mb-1">Confirmer le mot de passe</label>
+                <input id="reg-confirm" name="confirm" type="password" value={f.confirm} onChange={set('confirm')} required minLength={12} autoComplete="new-password" className={field} />
               </div>
             </div>
           </fieldset>
