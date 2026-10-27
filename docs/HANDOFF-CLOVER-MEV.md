@@ -7,6 +7,14 @@ connector cannot edit a doc: each update is a new doc with the newest time in it
 If they differ, GitHub wins.
 
 ## LIVE STATUS (newest first — read this line, then continue)
+- 2026-10-27 night (2) — **#14 self-serve onboarding DONE and proven end to end on the simulator.** Docs: Food Hub
+  `a3db978`. Checks: Food Hub typecheck, lint 0 errors, 1728 tests, `next build --webpack`, `verify:foodhub` 617/0;
+  QCMEV dashboard typecheck, lint, `next build`. Real browser (`tools/demo-video/check-signup.mjs`, QCMEV `483d6bf`):
+  sign-up → register enrolled → certificate → code linked → 3 ready flags, 15/15. Then Food Hub's real code against
+  that real QCMEV (`tests/mev-qcmev-live.test.ts`, Food Hub `d3797c1`, opt-in): merchant turned on, register sale
+  numbered, invoice text + QR for the device, refund → credit note, 2/2. How to rerun: `docs/revenu-quebec/demo/README.md`.
+  **Next:** #12 release-signing config for the APK (keystore from env/gradle properties, never in git), then finish the
+  review of the device endpoint + Android app, then #7 KMS/HSM key custody design (needs the owner's provider choice).
 - 2026-10-27 night — **#14 self-serve onboarding: code done and pushed, docs + build checks in progress.**
   Food Hub `50509e0` (`lib/foodhub/mev/clover-merchants.ts`, gate in `mev/config.ts`, `registerPlace` in
   `clover-register.ts`, welcome page steps, route `POST /api/foodhub/mev/clover-merchant`, 5 tests; full suite
@@ -41,7 +49,7 @@ environment yet.** Do not tell RQ it is "guaranteed error-free": ask for the nex
 | 11 | TAKATAK MEV Android app (prints invoice + QR) | ✅ builds, 8/8 tests; ❌ never run on a real Clover device | code + owner (Dev Kit) |
 | 12 | Release-signed APK | ❌ debug only (the keystore must be the owner's) | code + owner |
 | 13 | App created in the Clover developer dashboard, env in Coolify, APK uploaded, Clover's app review | ❌ | owner |
-| 14 | Self-serve onboarding of App Market merchants | ✅ built + tested (Food Hub `50509e0`, QCMEV `cc61264`); ❌ never tried with a real merchant | code + owner |
+| 14 | Self-serve onboarding of App Market merchants | ✅ built; proven end to end on the simulator (browser 15/15 + live Food Hub → QCMEV 2/2); ❌ never tried with a real Clover merchant | code + owner |
 | 15 | Merged and deployed | ❌ owner merges (order in step 5 below) | owner |
 
 Questions to put to RQ in writing: (a) is a Clover-register intake through Food Hub inside the certified product;
