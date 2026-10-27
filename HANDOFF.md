@@ -1,5 +1,7 @@
 # HANDOFF — QCMEV.CA work log
 
+> **2026-10-27 — Clover / Food Hub / vidéo : lire d'abord [docs/HANDOFF-CLOVER-MEV.md](docs/HANDOFF-CLOVER-MEV.md)** (fait, pas fait, étapes suivantes exactes).
+
 > **Priorité du 26 octobre 2026 : backend et intégrations. Lire READINESS.md et la dernière entrée ci-dessous avant de reprendre une ancienne liste.**
 
 > Read this FIRST before doing any work. Every step is committed + pushed
