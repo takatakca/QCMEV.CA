@@ -1,5 +1,7 @@
 # HANDOFF — QCMEV.CA work log
 
+> **Priorité du 26 octobre 2026 : backend et intégrations. Lire READINESS.md et la dernière entrée ci-dessous avant de reprendre une ancienne liste.**
+
 > Read this FIRST before doing any work. Every step is committed + pushed
 > as it finishes, so the git log and this file are the source of truth.
 > Update the status column and the log at the bottom after each step.
@@ -109,3 +111,193 @@
 - [x] ~~No way to re-send UTL~~ → `POST /api/operators/users/sync-mev` + `AuthService.syncMevUsers()`; auto-call after cert storage → task 6
 - [x] ~~Tenant isolation on transactions~~ → task 8.
 - [x] ~~Tenant isolation on devices~~ → `DevicesService.assertOwned()` on get/update/offline-status/flush; sales require device + user of the caller's operator.
+
+
+## 2026-10-24 — Dossier administratif Revenu Québec (priorité utilisateur)
+
+**Avant de refaire les PDF ou de reprendre le code : lire [docs/revenu-quebec/REPRISE.md](docs/revenu-quebec/REPRISE.md).**
+
+L’utilisateur demande désormais toutes les notes dans GitHub et autorise la poursuite de l’envoi à Revenu Québec. Deux originaux lus; SW-10 corrigé (copie avec signature manuscrite du concepteur conservée + copie pour nouvelle signature), résolution préparée et brouillon `.eml` produit. Aucun courriel envoyé : aucun outil/compte de messagerie disponible; résolution non signée; aucun certificat de signature numérique fourni. Le journal détaillé distingue les résultats vérifiés des affirmations de l’ancien agent et donne les étapes restantes. Le commit annoncé `fbcc91f` n’a pas été retrouvé dans les branches distantes accessibles.
+
+La branche distante `feature/official-protocol-foodhub` (`903e9db`) contient des travaux techniques plus récents que ce main, dont CERTIFICATION.md et SPEC_GAPS.md. Ne pas reprendre aveuglément l’ancienne liste technique de ce HANDOFF sans lire son état de relève sur cette branche. Aucune fusion de code ni validation officielle effectuée dans cette session.
+
+
+### Suivi administratif — compte et classement
+
+Dernière demande : **takatak.ca@gmail.com** comme expéditeur, suivi des réponses et archivage dans le OneDrive associé. `docs/revenu-quebec/ENVOI-ET-SUIVI.md` décrit le dossier prêt à envoyer et les règles de classement / reprise. Lettre texte + PDF et `.eml` mis à jour. Aucun outil Gmail ou OneDrive exposé : aucun envoi, dépôt ou surveillance automatique actif. Ne pas demander de nouveau les coordonnées ni refaire les documents existants.
+
+
+### Résolution électronique — dernière étape documentaire
+
+Résolution PDF avec trois champs de signature et trois dates créée, ainsi qu’un dossier combiné de 7 pages avant signature. Lire `docs/revenu-quebec/VERIFICATION-CHAMPS.md` pour l’inventaire des champs vérifiés et ceux laissés vides. Champs administratifs du SW-10 remplis avec les renseignements fournis; numéro d’identification et poste non fournis laissés vides, signature/date Revenu Québec réservées. Résolution toujours non signée, non adoptée; aucun envoi.
+---
+
+## 2026-10-24 — Merge: core line onto the OFFICIAL MEV-WEB protocol layer (branch `feature/official-protocol-foodhub`, replaces PR #2)
+
+Coordinated in issue #1 (core session keeps everything except the protocol layer; the Food Hub session owns the protocol
+layer, the Food Hub integration and the certification package). Base = `origin/main` d2d0dd6 + `origin/claude/nice-cray-4fhekg`
+1dc2849 (merged first, clean), then `origin/fix/functional-mev` (PR #2) merged and every conflict resolved by meaning.
+Nothing above this entry was removed. The "▶ NEXT SESSION" list above is superseded by the one at the end of this entry.
+
+**Rule applied:** every MEV-WEB message, header, signature, CSR, QR, receipt and transaction payload follows PR #2 (official
+names `ENVIRN`, `APPRLINIT=SEV`, `IDSEV`, `IDVERSI`, `CODCERTIF`, `IDPARTN`, `VERSI`, `VERSIPARN`, `IDAPPRL`, `NOTPS`, `NOTVQ`;
+bodies `reqCertif` / `reqUtil` / `reqTrans{transActu, transLot}` / `reqDoc`; ECDSA P-256; tags PROVEN / S1 / SPEC +
+`SPEC_GAPS.md`). The invented layer (`typeRequete`, `codeSEV`, `entete`/`corps`, `codeAutorisation`, RSA-2048, guessed
+`mev-web-*.revenuquebec.ca` URLs) is gone. Every behaviour of this log was kept and adapted:
+
+| Core-line behaviour (tasks above) | Where it lives now |
+|---|---|
+| 1 Offline semantics + queue write-back + device offline/online + audits | `TransactionsService.submitDevice()`: batches (`transLot`) in chain order until the queue is empty; answer (`psiNoTrans`, `psiDatTrans`, errors) written back; device online again only when its queue is empty; `OFFLINE_MODE_ACTIVATED` → `BATCH_SUBMITTED` → `OFFLINE_MODE_DEACTIVATED` (with duration); never REJECTED for a network error; flush every `MEV_OFFLINE_FLUSH_SECONDS` + 48 h watchdog (`OfflineWatchService`, replaces `offline-queue.service.ts` and its 5-minute cron) |
+| 2 Device `offlineSince`, `name` / `model` / `firmwareVersion` | `schema.prisma` Device; `POST /api/devices`, `PUT /api/devices/:id` (whitelist DTOs; file number + authorization code write-only, AES-GCM, frozen once certified) |
+| 3 Runtime validation of TRX payloads | `mev-web/payload-validator.ts` rewritten for the official names: checked before storing (issue) and before sending (queue); a bad stored record is never sent → REJECTED + queue FAILED + CRITICAL audit, the flush stops there (chain order) |
+| 4 Migration + Docker | ONE init migration `prisma/migrations/20261024000000_init` regenerated from the merged schema (`0001_init` of PR #2 removed); PR #2's production images (no secret, non-root, healthcheck) + new `dev` stages for `docker-compose.dev.yml` |
+| 5 Public operator registration + DTOs, UTL headers, MEV user sync | `POST /api/operators/register` (public, atomic operator + first ADMIN, 409 on NEQ / username, 5/min, `QCMEV_PUBLIC_REGISTRATION=false` closes it; NEQ / `noTPS` / `noTVQ` formats, sector `RBC`, password ≥ 12); UTL = official `reqUtil` signed by each certified device; `POST /api/operators/users/sync-mev` (no-op on the 2nd call) |
+| 6 Certificate lifecycle + nightly renewal | `certificates/certificate-lifecycle.service.ts`: CRT `AJO` (first) / `REM` + `noSerie` (renewal, signed with the current key, keeps IDAPPRL + chain, SPEC), then UTL for every user on that device; `@Cron('0 3 * * *', America/Montreal)`, window `CERT_RENEWAL_DAYS`, failures audited (CRITICAL if expired), re-entrancy guard; `POST /api/certificates/request`, `POST /api/certificates/renew`, `GET /api/certificates/active`, `GET /api/certificates/expiring` (scoped). Simulator: `REM` + `SIMULATOR_CERT_VALIDITY_DAYS` |
+| JWT `sub` fix | one payload shape everywhere (`AuthUser.sub`), strategy re-checks the user |
+| 8 Tenant isolation (devices, sales, receipts, items, cancel) | every `:id` route scoped by operator (404); an item must belong to the transaction in the route |
+| 9 ANN / COR / NDC reference the original MEV number | official layer: a credit note / reprint / post-invoice change carries `refs{noTrans, datTrans, avantTax}` of the original, fixed at signing time, so an original still queued offline is referenced at once and the new record is queued behind it (no more 409, no fill-in at flush); original REJECTED → 400; a credit note cannot be credited; cancel = full credit note; correction = « Facture corrigée » (`relatedTransactionId` on a credited receipt) or the price-change flow; the flush never resets a CREDITED status |
+| 10 class-validator DTOs | `transactions/dto`, `devices/dto`, `operators/dto`, `auth/dto` on the official fields (cents, `FP/F/P/NON`, `ARG/CRE/DEB/...`); global `ValidationPipe({ whitelist, transform })` in `src/bootstrap.ts` |
+| SW-77 suite (d2d0dd6) | `backend/test/sw77/sw77-preparation.spec.ts`: same SW77-01…12 matrix on the official names, database + in-process API + simulator (`QCMEV_DB_TESTS=1 npm run test:integration`, run by `tools/local-run`). Honest label: internal, NOT Revenu Québec's personalized SW-77 |
+| ThrottlerModule (d2d0dd6) | two tiers `short` / `medium` (`QCMEV_RATE_LIMIT_PER_SECOND` 10, `_PER_MINUTE` 100) per IP, per tenant on Food Hub routes (20/s), login 10/min, register 5/min; simulator + health skipped |
+
+**No duplicate modules left:** one simulator (`src/simulator`), one receipt service (`src/receipts`), one key store
+(`crypto/key-vault.ts`), one time helper (`common/time.ts`, America/Montreal), one offline mechanism, one `.env.example`
+(`backend/.env.example`; the root one had placeholder secrets that the config now refuses).
+
+**Checks (2026-10-24, Windows, Node 22, embedded PostgreSQL 16.14):** backend typecheck 0 errors, lint 0, Jest 94 unit tests
+pass (+18 database tests skipped without a DB), `nest build` OK; frontend typecheck / lint / `next build` OK (10 pages);
+`prisma migrate deploy` OK and `prisma migrate diff` = no drift; `tools/local-run/run-local.mjs` ALL GREEN: SW-77
+preparation 18/18, `scripts/run-test-cases.ts` 13/13, Food Hub e2e 38/38 + 2/2 after restart, login rate limit 429.
+Docker itself not run (no Docker on this machine).
+
+**Notes:** a database created from either old init migration must be reset (`docker compose down -v`). The operator's
+environment is fixed by the server's `MEV_ENVIRONMENT` (not by `Operator.environment` alone). The offline test uses the
+simulator's `mevDown` switch instead of pointing the operator at an unreachable URL.
+
+### ▶ NEXT SESSION — start here (replaces the list above)
+1. Owner: review + merge the PR of `feature/official-protocol-foodhub` (it supersedes PR #2, which is closed).
+2. Revenu Québec partner documents (SW-73, .A, .B, .D) → close `SPEC_GAPS.md` rows; personalized SW-77 cases → DEV, then ESSAI.
+3. Product decision: keep `QCMEV_PUBLIC_REGISTRATION` open outside the simulator? Non-exportable key custody (KMS / HSM) before PROD.
+4. Run `docker compose up --build` once on a machine with Docker.
+
+---
+
+## 2026-10-24 — Review round 1 on the protocol layer (branch `feature/official-protocol-foodhub`, PR #3)
+
+Five findings of the round-1 review, each checked against Revenu Québec's public pages before fixing. All five were real.
+
+| # | Finding | Fix | Source |
+|---|---|---|---|
+| 1 | Requests were sent as raw UTF-8 JSON (accents in item and user names) | `common/ascii-json.ts`: every character above 0x7E is sent as a JSON `\uXXXX` escape; SIGNATRANSM signs the exact ASCII bytes; the simulator refuses a non-ASCII body (`SIM-ASCII`). SPEC_GAPS #29 (escapes vs transliteration) | SW-76 2025-06 §4.2 « en utilisant la table ASCII » |
+| 2 | CSR `L=` was today's daylight-saving offset (-04:00 from March to November) | `Operator.addressUtc` (new column, default `-05:00`; `-04:00` for Îles-de-la-Madeleine / Basse-Côte-Nord), register / settings DTOs, seed, dashboard setting; `crypto/csr.ts` refuses any other value; simulator checks it. Transaction `utc` unchanged, now SPEC_GAPS #30 | « Configuration du système d'enregistrement des ventes » |
+| 3 | An expired certificate still issued invoices (warning + « CERTIFICAT INVALIDE ») | `TransactionsService.issue()` refuses: 423 `certReady` + CRITICAL audit, nothing signed or stored (sales, credit notes, reprints, Food Hub); the queue is held (nothing sent) until the renewal; the user report is displayed but not transmitted | « Obtention et suppression d'un ou plusieurs certificats numériques », Expiration |
+| 4 | User report marked "built" without the listed contents; summary lacked 3 fields | `reports/user-report-renderer.ts`: business name, TPS / TVQ, user, address (numéro, rue, ville, code postal), last document of the device, device id, SEV id and version, login and production times, QR; summary never displayed. `sommVentes` gains `nbTransPai`, `ajus`, `mtdu` (names SPEC). `UserReport` keeps `deviceId`, `userId`, `summaryJson`, `displayJson`. Dashboard page rewritten. CERTIFICATION.md → partial; SPEC_GAPS #11, #31 | « Production du rapport de l'utilisateur », SW-76 §4.4.3 |
+| 5 | A 4xx without `listErr` (gateway 401 / 403, wrong path 404, HTML page) counted as accepted (lost core-line rule) | `MevWebService.post()`: such a 4xx gets `{codRetour: "HTTP"}` → REJECTED, queue FAILED, audit (UTL: user not registered); 408 / 429 and a 2xx without the `retour*` envelope → unreachable (offline mode, sent again). SPEC_GAPS #32 | HANDOFF task 1 (core line) |
+
+Migration: new `prisma/migrations/20261024150000_address_utc_user_report` (adds `Operator.addressUtc`, four nullable `UserReport` columns); the init migration is unchanged.
+
+**Checks (2026-10-24, Windows, Node 22, embedded PostgreSQL 16):** backend typecheck 0 errors, lint 0, Jest 121 unit tests
+pass (27 new in `test/protocol-round1.spec.ts`; 20 database tests skipped without a DB); frontend typecheck / lint / `next build`
+OK (10 pages); `tools/local-run/run-local.mjs` ALL GREEN: build, `prisma migrate deploy`, migration drift = no difference,
+SW-77 preparation 20/20 (new: ASCII, EXPIRED, CSR L=-05:00 in SW77-01, user report contents in SW77-11), seed, CRT + UTL,
+`scripts/run-test-cases.ts` 13/13, Food Hub e2e 38/38 + 2/2 after restart, login rate limit 429.
+
+**Food Hub:** no change needed (an expired certificate answers the existing 423 `location_not_ready` / `certReady`,
+which Food Hub already treats as "not ready": slow retry + alert). CONTRACT.md says so.
+
+### ▶ NEXT SESSION — start here (replaces the list above)
+1. Owner: review + merge PR #3 (`feature/official-protocol-foodhub`).
+2. Revenu Québec partner documents (SW-73, .A, .B, .D) → close `SPEC_GAPS.md` rows (#29 ASCII form, #30 `utc`, #31–32 new).
+3. Product decision: keep `QCMEV_PUBLIC_REGISTRATION` open outside the simulator? Non-exportable key custody (KMS / HSM) before PROD.
+4. Run `docker compose up --build` once on a machine with Docker.
+
+---
+
+## 2026-10-24 — Review round 2 on the protocol layer (branch `feature/official-protocol-foodhub`, PR #3)
+
+One finding (major, integrity), real. The round-1 fix decided "does this 4xx carry its errors?" on any `listErr`
+found anywhere in the body (depth 5), while the callers read only the `retour*` envelope (and, for TRX, its items).
+A 4xx with a `listErr` outside the envelope (top-level `{listErr}`, `{erreur: {listErr}}`) therefore reached the
+caller with an empty list and was **accepted**: sale ACCEPTED with no MEV-WEB number, queue COMPLETED, no audit,
+never sent again; UTL user marked registered; DOC report ACCEPTED. Same family: in a 4xx batch answer, a transaction
+left without an error of its own (another one carrying real errors) was accepted too.
+
+| Fix | Where |
+|---|---|
+| `readableErrors(kind, answer)`: the envelope's own `listErr`, plus each `retourTransActu` / `retourTransLot` item's `listErr` for TRX: exactly what `sendTransactions`, `OperatorsService`, `CertificatesService`, `ReportsService` read. A 4xx with nothing there gets `{codRetour: "HTTP"}` in the envelope; the depth-5 walk (`firstErrorCode`) is gone. `MevRequestLog.mevErrorCode` / `success` follow the same lists | `backend/src/mev-web/mev-web.service.ts` |
+| In a 4xx batch answer every transaction left without an error gets `HTTP-<status>` (REJECTED); real errors keep their class (95 stays `retry_batch`). 2xx answers unchanged | `MevWebService.sendTransactions` |
+| Tests: 15 new in `backend/test/protocol-round2.spec.ts`, including end to end through the real `TransactionsService.submitBatch` (REJECTED, queue FAILED, MEV_ERROR audit) and `OperatorsService.registerSevUser` (user not registered) | `backend/test/protocol-round2.spec.ts` |
+
+SPEC_GAPS #32 updated (where MEV-WEB puts header-level errors is unknown; SW-73).
+
+**Checks (2026-10-24, Windows, Node 22, embedded PostgreSQL 16):** backend typecheck 0 errors, lint 0, Jest 136 unit
+tests pass (20 database tests skipped without a DB); `tools/local-run/run-local.mjs --skip-unit` ALL GREEN: build,
+`prisma migrate deploy`, migration drift = no difference, SW-77 preparation 20/20, seed, CRT + UTL,
+`scripts/run-test-cases.ts` 13/13, Food Hub e2e 38/38 + 2/2 after restart, login rate limit 429. No migration.
+
+**Food Hub:** no change needed (a REJECTED sale is already reported to Food Hub as rejected; CONTRACT.md unchanged).
+
+### ▶ NEXT SESSION — start here (replaces the list above)
+1. Owner: review + merge PR #3 (`feature/official-protocol-foodhub`).
+2. Revenu Québec partner documents (SW-73, .A, .B, .D) → close `SPEC_GAPS.md` rows (#29 ASCII form, #30 `utc`, #31–32).
+3. Product decision: keep `QCMEV_PUBLIC_REGISTRATION` open outside the simulator? Non-exportable key custody (KMS / HSM) before PROD.
+4. Run `docker compose up --build` once on a machine with Docker.
+
+---
+
+## 2026-10-24 — Review minors on PR #3 (branch `feature/official-protocol-foodhub`)
+
+Five minor findings from the end-to-end and protocol reviews, plus one doc alignment. All fixed with tests.
+
+| # | Finding | Fix | Where |
+|---|---|---|---|
+| 1 | The « Réf. » line of every credit note / corrected receipt was cut at exactly 42 characters, in the middle of the time | `wrap()` / `wrapTokens()` break only between words; « Réf. : transaction N » / « du AAAA-MM-JJ hh:mm:ss » (date and time kept whole). Checked for every line type: name, address, city, date, number, order, item (description wraps under itself, amount stays on the first line; it used to be truncated), TPS / TVQ numbers, payment, « Crédité à » (was truncated), mentions, MEV-WEB time and number, device id. Only a single word longer than 42 is ever cut | `receipts/receipt-renderer.ts`, `test/receipt-layout.spec.ts` (14 layouts) |
+| 2 | Dashboard « Environnement » tile always « – » (read `mevStatus.operator.mevEnvironment`, which does not exist); the « Exploitant » card never showed and would have shown the authorization code | Tile reads `environment` (+ « Non certifié : simulateur / essais seulement »); the card reads `GET /operators/me` (no NEQ, no authorization code). `test/dashboard-contract.spec.ts` fails if a page reads a field the API does not send | `frontend/src/pages/index.tsx` |
+| 3 | No API route or screen to link a Food Hub location to a device (only the seed CLI) | `GET/PUT /api/operators/foodhub-locations`, `DELETE /api/operators/foodhub-locations/:id` (manager; row kept inactive); linking creates `FOODHUB-AUTO` and registers it with UTL when a device is certified; another operator's location → 409, another operator's device → 404. Dashboard: « Appareils » → « Cuisines Food Hub » | `integrations/foodhub/foodhub-locations.ts`, `frontend/src/components/FoodHubLocations.tsx`; tests `test/review-minors.spec.ts`, SW-77 suite `FH-LOCATION`, e2e L2 / L3 |
+| 4 | Food Hub's test stand-in (`scripts/e2e/mock-qcmev.mjs`, verify:foodhub section 48) numbers `261024-0001` and puts « RÉF. FACTURE N » in the credit-note mentions; the real QCMEV sends `"1"`, `"2"`… and a « Réf. » text line | QCMEV side: CONTRACT.md §7 « What Food Hub may rely on » (opaque `noTrans`, `mevTransactionNumber` as received, the reference is a text line, credit notes and copies dated when issued in Montréal time, 42 columns). **Food Hub side still to do** (not this branch): align the stand-in and the two checks (S1 regex, S6 mention) in Food Hub PR #99 | `integrations/foodhub/CONTRACT.md` |
+| 5 | UTL was still sent with an expired certificate, while CERTIFICATION.md / SPEC_GAPS #9 said "every transmission" was blocked | `registerSevUser()` skips a device whose certificate has expired (CRITICAL audit); that device registers every active user right after its renewal; all devices expired → 423 `certReady`, user not registered. Docs now say exactly what is still sent: only the renewal CRT `REM` | `operators/operators.ts`; tests `test/review-minors.spec.ts`, SW-77 `EXPIRED` |
+| 6 | CONTRACT.md §8 said Food Hub alerts at 15 minutes | Aligned with Food Hub `docs/MEV_INTEGRATION.md` §6: CRITICAL after 1 minute for a sale or credit note waiting (at once when held for a person or waiting for its payment mode); copies: warning at 15 minutes | `integrations/foodhub/CONTRACT.md` |
+
+No migration, no new environment variable. The renderer change alters `text80mm` (and so `renderHash`) of receipts with
+long lines; nothing stores `renderHash`.
+
+**Checks (2026-10-24, Windows, Node 22, embedded PostgreSQL 16):** backend typecheck 0 errors, lint 0, Jest 164 passed
+(21 database tests skipped without a DB), build OK; frontend typecheck, lint (no warning) and `next build` (10 pages) OK;
+`tools/local-run/run-local.mjs` ALL GREEN in 155 s: build, `prisma migrate deploy`, drift = none, SW-77 preparation 21/21
+(new FH-LOCATION; EXPIRED now also checks UTL), seed, CRT + UTL, Jest 164, `scripts/run-test-cases.ts` 13/13, Food Hub
+e2e 40/40 (new L2, L3) + 2/2 after restart, login rate limit 429.
+
+### ▶ NEXT SESSION — start here (replaces the list above)
+1. Owner: review + merge PR #3 (`feature/official-protocol-foodhub`).
+2. Food Hub PR #99: align `scripts/e2e/mock-qcmev.mjs` with CONTRACT.md §7 (numbers `"1"`, `"2"`…; the reference as a
+   « Réf. » text line, not a mention; `mevTransactionNumber` opaque; copies dated in Montréal time) and the S1 / S6
+   checks of `scripts/e2e/mev-scenarios.mjs`.
+3. Revenu Québec partner documents (SW-73, .A, .B, .D) → close `SPEC_GAPS.md` rows (#9 REM with an expired certificate, #29 ASCII form, #30 `utc`, #31–32).
+4. Product decision: keep `QCMEV_PUBLIC_REGISTRATION` open outside the simulator? Non-exportable key custody (KMS / HSM) before PROD.
+5. Run `docker compose up --build` once on a machine with Docker.
+
+
+## 2026-10-26 — Reprise backend et intégrations (fix/backend-readiness)
+
+Objectif utilisateur : continuer le logiciel jusqu’à une livraison vérifiée et lister tous les manques, sans annoncer une production fictive. Intégration de `feature/official-protocol-foodhub` (`903e9db`) avec les PDF et notes main, sans effacer les historiques. Corrections : rejeu concurrent Food Hub, remboursements concurrents/soldes de taxes atomiques, accusés MEV incomplets, numéros identiques sur deux journées hors ligne, file bornée, readiness DB, validation des paramètres, dépendances de production corrigées, routage interne Next au build, permissions et contexte Docker, calcul de l’aperçu des ventes, précontrôle empêchant une migration silencieuse de l’ancien init.
+
+Lire **READINESS.md** pour la preuve des tests et l’inventaire des neuf blocages de production. La branche n’est pas un déploiement et le simulateur n’est pas une certification officielle. Secrets de test et bases temporaires supprimés à la fin du runner. `scripts/verify-frontend-container.py` reproduit le contrôle conteneur/proxy et la CI comprend les jobs d’image; leur résultat distant doit être constaté séparément.
+
+Ne pas refaire les documents administratifs. Ne pas réinitialiser une base existante. Aucune signature, aucun courriel ou dépôt OneDrive ni appel réel de plateforme effectué. La question sur les données de production existantes est en attente; préserver les données par défaut. Aucun travail ne continue en arrière-plan après la fin de cette tâche.
+
+
+### Résultats et installation distante
+
+Parcours complet du 26 octobre : 203 tests unitaires + 24 tests DB exécutés séparément, 40+2 contrôles Food Hub, précontrôle/migrations/dérive, CRT/UTL, redémarrage et limitation : tout passe localement. Frontend Docker construit et démarré, transport HTTP du proxy vérifié. Audits de production 0/0. Première CI sur `5bf6567` : échec npm ci backend sur Node 22/npm 10 (entrée Webpack imbriquée manquante), malgré réussite npm 11 locale. Reproduit dans Node 22, lockfile corrigé par npm 10.9.9, dry-run gelé réussi; nouvelle CI nécessaire. Image backend toujours à confirmer hors du blocage HTTP 403 Alpine local.
+
+
+### CI confirmée et résumé financier journalier
+
+CI complète du commit `b14d580` réussie : https://github.com/takatakca/QCMEV.CA/actions/runs/40410331204 (backend/frontend, e2e-simulator, frontend-container, backend-image). Le build backend est donc prouvé sur GitHub; le refus Alpine local n’est pas un défaut de l’image. Dernier défaut détecté et corrigé : les taxes des additions/estimations entraient dans le résumé financier du jour. Filtre limité aux clôtures RFER et test DB ajouté. Nouveau parcours local complet : **25/25 DB, 203 unitaires, 40+2 Food Hub**, tout passe. Nouvelle CI sur ce correctif à vérifier. Les mises à jour uniquement documentaires ne relancent plus inutilement le workflow push.
+
+
+### Livraison vérifiée — fin de cette session
+
+**Code `23824ed`, CI complète Success : https://github.com/takatakca/QCMEV.CA/actions/runs/40410849048.** Les cinq jobs passent : backend, frontend, e2e-simulator, frontend-container, backend-image. Résultats locaux finaux : 203 unitaires, 25 DB (dont le résumé financier), 40+2 contrôles Food Hub, aucun audit de production connu. L’installation normale et les builds ont aussi été réexécutés. Les mises à jour documentaires suivantes ne modifient pas le code vérifié.
+
+Tous les correctifs sont sur `fix/backend-readiness`. Un pointeur et AGENTS.md sont sauvegardés sur `main` pour retrouver cette branche; le code applicatif main n’a pas été déployé ou migré. Aucun accès cible, envoi de courriel, dépôt OneDrive, clé HSM ou certification n’a été inventé. Les limitations et les fonctions encore absentes sont explicites dans READINESS.md et CERTIFICATION.md. Pas de processus ou surveillance utilisateur laissé en arrière-plan; les jobs CI mentionnés ont réellement terminé.

@@ -75,7 +75,7 @@ export default function LoginPage() {
         </form>
 
         <p className="mt-6 text-center text-xs text-gray-400">
-          Certifié Revenu Québec · MEV-WEB 2025
+          Logiciel non certifié · simulateur / DEV seulement
         </p>
       </div>
     </div>

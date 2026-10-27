@@ -5,6 +5,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Layout from '../../components/Layout';
+import { salePreview } from '../../lib/sale-preview';
 import { createTransaction, listDevices } from '../../lib/api';
 
 interface LineItem {
@@ -25,7 +26,8 @@ const PAYMENT_MODES = [
   { value: 'CASH',         label: 'Comptant' },
   { value: 'CREDIT_CARD',  label: 'Carte de crédit' },
   { value: 'DEBIT_CARD',   label: 'Carte de débit' },
-  { value: 'MOBILE',       label: 'Paiement mobile' },
+  { value: 'CHEQUE',       label: 'Chèque' },
+  { value: 'MIXED',        label: 'Paiement mixte' },
   { value: 'GIFT_CARD',    label: 'Carte-cadeau' },
   { value: 'OTHER',        label: 'Autre' },
 ];
@@ -46,9 +48,10 @@ export default function NewTransactionPage() {
 
   useEffect(() => {
     listDevices().then((r) => {
-      setDevices(r.data);
-      if (r.data.length > 0) setDeviceId(r.data[0].id);
-    });
+      const active = (r.data ?? []).filter((d: { isActive: boolean }) => d.isActive);
+      setDevices(active);
+      if (active.length > 0) setDeviceId(active[0].id);
+    }).catch(() => setError('Impossible de charger les appareils'));
   }, []);
 
   const addItem = () =>
@@ -59,18 +62,11 @@ export default function NewTransactionPage() {
   const updateItem = (idx: number, field: keyof LineItem, value: any) =>
     setItems(items.map((item, i) => i === idx ? { ...item, [field]: value } : item));
 
-  const calcSubtotal = () =>
-    items.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0);
-
-  const calcTps = () =>
-    items.reduce((sum, i) =>
-      ['FP', 'F'].includes(i.taxCode) ? sum + i.quantity * i.unitPrice * 0.05 : sum, 0);
-
-  const calcTvq = () =>
-    items.reduce((sum, i) =>
-      ['FP', 'P'].includes(i.taxCode) ? sum + i.quantity * i.unitPrice * 0.09975 : sum, 0);
-
-  const total = () => calcSubtotal() + calcTps() + calcTvq() + Number(tips || 0);
+  const preview = salePreview(items, Number(tips || 0));
+  const calcSubtotal = () => preview.subtotalCents / 100;
+  const calcTps = () => preview.tpsCents / 100;
+  const calcTvq = () => preview.tvqCents / 100;
+  const total = () => preview.totalCents / 100;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
