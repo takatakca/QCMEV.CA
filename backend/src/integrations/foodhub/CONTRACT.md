@@ -83,7 +83,10 @@ of that SEV: it never signs, never talks to Revenu Québec, and prints **only** 
 }
 ```
 
-* `channel`: `uber_eats | doordash | skip | tgtg | relay | website | phone | storefront | clover_online | manual`.
+* `channel`: `uber_eats | doordash | skip | tgtg | relay | website | phone | storefront | clover_online | clover_pos | manual`.
+* `source.model`: `stored` (platform order), `direct` (Food Hub's own order) or `pos` — a sale rung up **on the restaurant's
+  Clover register** and relayed by Food Hub (channel `clover_pos`, and only that channel). Same rules as any sale: counter
+  `CMP` or tables `TBL`, the Clover tender as `payment.mode` (`collectedBy: clover_tender` or `cash`), the tip as `pourb`.
 * `serviceType`: `LVT` (platform order, picked up or delivered), `LVR` (own delivery), `CMP` (counter / phone / website pickup), `TBL` (tables).
 * `taxCode`: `FP | F | P | NON`; `activity`: `RES | BAR | NON`.
 * `payment.mode`: `ARG | CHQ | CRE | DEB | CPR | MIX | AUT | INC | AUC`; `collectedBy`: `platform | paylink | clover_tender | cash`.

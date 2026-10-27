@@ -318,3 +318,12 @@ main a été **annulée par revert**, `fix/backend-readiness` la couvrait déjà
 - `seed:operator` accepte un `name` d'appareil (facultatif).
 - Contrôles : typecheck + lint backend/frontend, 203 tests unitaires passés.
 - **C'est une répétition sur le simulateur**, pas la démonstration officielle (ESSAI + cas SW-77 personnalisés).
+
+## 2026-10-27 — Ventes de la caisse Clover acceptées (`pos` / `clover_pos`)
+
+- Contrat Food Hub : `source.model` accepte `pos` (vente sonnée sur la caisse Clover du restaurant, relayée par Food Hub)
+  avec le canal `clover_pos`, et seulement ensemble. Même règles que toute vente (CMP / TBL, mode de paiement Clover,
+  pourboire en `pourb`). Côté Food Hub : branche `feature/mev-clover-register` (empilée sur la PR #99).
+- PR #99 de Food Hub : simulateur et contrôles alignés sur CONTRACT.md §7 (commit `2720832`).
+- Contrôles : 205 tests unitaires, local-run complet (25 tests PostgreSQL, 13 scénarios, Food Hub 40/40 + 2/2) vert.
+- Reste : l'appli TAKATAK MEV sur l'appareil Clover qui imprime la facture (code QR) — l'API REST de Clover ne peut pas.

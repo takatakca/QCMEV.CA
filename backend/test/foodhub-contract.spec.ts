@@ -8,7 +8,7 @@ function sale(channel: FoodHubSaleV1['source']['channel'], serviceType: FoodHubS
   const lines = o.lines ?? [{ description: 'Poutine', quantity: '1', unitPriceCents: 1299, totalCents: 1299, taxCode: 'FP', activity: 'RES' }];
   const sum = lines.reduce((s, l) => s + l.totalCents + (l.modifiers ?? []).reduce((m, x) => m + x.totalCents, 0), 0);
   const subtotal = sum + (serviceType === 'LVR' ? o.delivery ?? 0 : 0) + (o.serviceFee ?? 0) - (o.discount ?? 0);
-  const model = ['website', 'phone', 'storefront'].includes(channel) ? 'direct' : 'stored';
+  const model = channel === 'clover_pos' ? 'pos' : ['website', 'phone', 'storefront'].includes(channel) ? 'direct' : 'stored';
   return {
     schema: 'foodhub.sale.v1',
     tenantId: 'takatak',
@@ -28,6 +28,24 @@ function sale(channel: FoodHubSaleV1['source']['channel'], serviceType: FoodHubS
 }
 
 describe('foodhub.sale.v1 → SEV transaction (mapper fixtures per channel)', () => {
+  it('Clover register sale (model pos, clover_pos): counter, Clover tender, tip as pourb', () => {
+    const s = sale('clover_pos', 'CMP', { tip: 200, payment: { mode: 'DEB', collectedBy: 'clover_tender' } });
+    validateSale(s, 'takatak');
+    const m = mapSale(s);
+    expect(m.draft.typServ).toBe('CMP');
+    expect(m.draft.modPai).toBe('DEB');
+    expect(m.draft.tipCents).toBe(200);
+  });
+
+  it('clover_pos only with model pos, and model pos only with clover_pos', () => {
+    const wrongModel = sale('clover_pos', 'CMP');
+    wrongModel.source = { ...wrongModel.source, model: 'direct' };
+    expect(() => validateSale(wrongModel, 'takatak')).toThrow(ContractError);
+    const wrongChannel = sale('phone', 'CMP');
+    wrongChannel.source = { ...wrongChannel.source, model: 'pos' };
+    expect(() => validateSale(wrongChannel, 'takatak')).toThrow(ContractError);
+  });
+
   it('Uber Eats delivery: LVT, courier tip and platform delivery fee excluded', () => {
     const s = sale('uber_eats', 'LVT', { tip: 300, delivery: 399 });
     validateSale(s, 'takatak');

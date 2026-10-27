@@ -11,7 +11,7 @@ export const SALE_SCHEMA = 'foodhub.sale.v1';
 export const CREDIT_SCHEMA = 'foodhub.credit.v1';
 export const PRINT_SCHEMA = 'foodhub.print.v1';
 
-export const CHANNELS = ['uber_eats', 'doordash', 'skip', 'tgtg', 'relay', 'website', 'phone', 'storefront', 'clover_online', 'manual'] as const;
+export const CHANNELS = ['uber_eats', 'doordash', 'skip', 'tgtg', 'relay', 'website', 'phone', 'storefront', 'clover_online', 'clover_pos', 'manual'] as const;
 export type Channel = (typeof CHANNELS)[number];
 
 export interface FoodHubModifier {
@@ -38,7 +38,8 @@ export interface FoodHubSaleV1 {
   locationId: string;
   saleKey: string;
   occurredAt: string;
-  source: { model: 'stored' | 'direct'; channel: Channel; orderId: string; externalOrderId?: string; displayId?: string; posOrderId?: string; brand?: string };
+  /** model `pos`: a sale rung up on the restaurant's Clover register (channel `clover_pos`), relayed by Food Hub. */
+  source: { model: 'stored' | 'direct' | 'pos'; channel: Channel; orderId: string; externalOrderId?: string; displayId?: string; posOrderId?: string; brand?: string };
   serviceType: TypServ;
   ecommerce: boolean;
   user?: { id?: string; name?: string };
@@ -145,7 +146,8 @@ export function validateSale(b: FoodHubSaleV1, headerTenant: string): void {
   c.need(typeof b.locationId === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(b.locationId), 'locationId', 'is required (letters, digits, _ and -)');
   c.need(typeof b.saleKey === 'string' && b.saleKey.startsWith(`fh:${b.tenantId}:`) && KEY_PART.test(b.saleKey), 'saleKey', 'must be fh:{tenant}:{model}:{channel}:{order id}');
   c.need(typeof b.occurredAt === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}:\d{2}|Z)$/.test(b.occurredAt), 'occurredAt', 'must be ISO-8601 with an offset');
-  c.need(b.source && ['stored', 'direct'].includes(b.source.model), 'source.model', 'must be stored or direct');
+  c.need(b.source && ['stored', 'direct', 'pos'].includes(b.source.model), 'source.model', 'must be stored, direct or pos');
+  c.need(!b.source || (b.source.model === 'pos') === (b.source.channel === 'clover_pos'), 'source.channel', 'clover_pos goes with model pos, and only with it');
   c.need(b.source && (CHANNELS as readonly string[]).includes(b.source.channel), 'source.channel', `must be one of ${CHANNELS.join(', ')}`);
   c.need(b.source && typeof b.source.orderId === 'string' && b.source.orderId.length > 0, 'source.orderId', 'is required');
   c.need(['LVT', 'LVR', 'CMP', 'TBL'].includes(b.serviceType), 'serviceType', 'must be LVT, LVR, CMP or TBL');
