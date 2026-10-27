@@ -41,8 +41,8 @@ official demonstration.** Re-record with ESSAI + Revenu Québec's personalized S
 Checks (before the Android commit): typecheck, lint 0 errors, 1721 tests, `next build --webpack`, `verify:foodhub` 617/0.
 
 ## NOT DONE — exact next steps, in order
-1. **Android build**: `cd foodhubca/apps/clover-mev-android && ./gradlew test assembleDebug` (needs Android SDK 34; in the
-   cloud session it was installed at `/opt/android-sdk`). Fix any compile error, commit on `feature/mev-clover-register`.
+1. ~~Android build~~ **DONE**: `./gradlew test assembleDebug` OK (Clover SDK 341), 8/8 unit tests, debug APK 4.4 MB
+   (needs Android SDK 34; in the cloud session it was at `/opt/android-sdk`).
 2. Run Food Hub checks again after step 1 (`npm run typecheck && npm run lint && npm test`, webpack build, `npm run verify:foodhub`).
 3. Open the PR for `feature/mev-clover-register` (base: `feature/mev-qcmev-integration`), body from this file.
 4. On a real **Clover Dev Kit / sandbox merchant** verify: PAYMENT_PROCESSED reaches the app; CloverAuth permissions;
