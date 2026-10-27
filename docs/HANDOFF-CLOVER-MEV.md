@@ -48,6 +48,19 @@ If they differ, GitHub wins.
   `feature/mev-clover-register` log. **Next:** finish the review (device endpoint, Android app), release-signing config
   for the APK (keystore stays with the owner), then the open code items in "NOT DONE" step 7.
 
+## What connects to what (checked 2026-10-27 in the repos)
+- **Food Hub (foodhubca)** ↔ **Takatak MEV (QCMEV.CA)**: yes — all the work above (platform, own, register sales).
+- **ON2GO.ca (on2goca, private)**: a static directory fed by Food Hub's public feed (2 kitchens, 17 brands in the
+  snapshot). Its restaurants are Food Hub kitchens, so they are covered by Food Hub → Takatak MEV once each kitchen is
+  set up (QCMEV operator + certified device + link, Food Hub allowlist + system of record « qcmev »). ON2GO direct
+  orders are Food Hub "direct" orders: already in the pipeline (PR #99). Its "for businesses" page sells TAKATAK Food
+  Hub and TAKATAK Phone AI only — **not TAKATAK MEV yet** (owner decision: price, listing).
+- **Facturations (takatakca/Facturations, `facturations.bolon.ca`)**: a separate B2B invoicing app for GROUPE TAKATAK
+  staff, with Wave as the accounting record; not deployed. **No link** to Food Hub, QCMEV, Clover or ON2GO in its code.
+  Different invoices: Revenu Québec restaurant sales receipts (MEV) ≠ business invoices sent through Wave. Keep apart.
+- **"Accounting by TAKATAK"**: no repository by that name. Closest: Food Hub's Money section (payout reconciliation,
+  internal ledger, Excel / CSV exports for the accountant, nothing posted to QuickBooks) and Facturations' Wave link.
+
 ## IS IT "100 % CERTIFIED"? — honest checklist (owner asked 2026-10-27)
 **No. Nobody but Revenu Québec can certify it, and it has not been tested on a real Clover device or in RQ's ESSAI
 environment yet.** Do not tell RQ it is "guaranteed error-free": ask for the next step (DEV/ESSAI access, SW-77 cases).
