@@ -88,10 +88,15 @@ export interface CreateTransactionDto {
   tableNumber?:  string;
   numberOfCovers?: number;
   tipsAmount?:   number;
-  discountAmount?: number;
   relatedTransactionId?: string;
   isTraining?:   boolean;
+  /** Partner POS that sent the sale (partner API) + its id for it — idempotency key */
+  source?:       string;
+  externalRef?:  string;
 }
+
+/** Money is rounded to the cent, half away from zero */
+const round2 = (n: number) => Math.sign(n) * Math.round(Math.abs(n) * 100 + Number.EPSILON) / 100;
 
 @Injectable()
 export class TransactionsService {
@@ -156,18 +161,21 @@ export class TransactionsService {
     });
     const transactionNumber = (maxNum._max.transactionNumber ?? 0) + 1;
 
-    // Calculate tax amounts per item
+    // Tax per item (shown on the item lines), then on the taxable subtotals for the totals, all to the cent:
+    // summing rounded line taxes can drift a cent from the tax of the whole bill.
     const items = dto.items.map(item => {
-      const totalPrice = item.quantity * item.unitPrice;
-      const tpsAmount  = item.taxCode?.includes('F') ? totalPrice * TPS_RATE : 0;
-      const tvqAmount  = item.taxCode?.includes('P') ? totalPrice * TVQ_RATE : 0;
+      const totalPrice = round2(item.quantity * item.unitPrice);
+      const tpsAmount  = item.taxCode?.includes('F') ? round2(totalPrice * TPS_RATE) : 0;
+      const tvqAmount  = item.taxCode?.includes('P') ? round2(totalPrice * TVQ_RATE) : 0;
       return { ...item, totalPrice, tpsAmount, tvqAmount };
     });
 
-    const subtotal      = items.reduce((s, i) => s + i.totalPrice, 0);
-    const tpsAmount     = items.reduce((s, i) => s + i.tpsAmount, 0);
-    const tvqAmount     = items.reduce((s, i) => s + i.tvqAmount, 0);
-    const totalAmount   = subtotal + tpsAmount + tvqAmount + (dto.tipsAmount ?? 0) - (dto.discountAmount ?? 0);
+    const subtotal      = round2(items.reduce((s, i) => s + i.totalPrice, 0));
+    const tpsAmount     = round2(items.filter(i => i.taxCode?.includes('F')).reduce((s, i) => s + i.totalPrice, 0) * TPS_RATE);
+    const tvqAmount     = round2(items.filter(i => i.taxCode?.includes('P')).reduce((s, i) => s + i.totalPrice, 0) * TVQ_RATE);
+    // montantTotal = the bill after tax. The tip is its own field (montantPourboire), never in the total;
+    // a discount is a negative line, so tax applies to the discounted price.
+    const totalAmount   = round2(subtotal + tpsAmount + tvqAmount);
 
     // Build and hash the transaction data
     const txDataStr = JSON.stringify({ deviceId: dto.deviceId, civilDate, transactionNumber, totalAmount });
@@ -189,7 +197,6 @@ export class TransactionsService {
         tvqAmount,
         totalAmount,
         tipsAmount:      dto.tipsAmount,
-        discountAmount:  dto.discountAmount,
         paymentMode:     dto.paymentMode,
         printMode:       dto.printMode ?? PrintMode.PAPER,
         tableNumber:     dto.tableNumber,
@@ -198,6 +205,9 @@ export class TransactionsService {
         mevSubmissionStatus: device.offlineMode ? MevStatus.QUEUED_OFFLINE : MevStatus.PENDING,
         relatedTransactionId: dto.relatedTransactionId,
         isTraining:      dto.isTraining ?? false,
+        source:          dto.source,
+        externalRef:     dto.externalRef,
+        receiptToken:    crypto.randomBytes(18).toString('base64url'),
         items: {
           create: items.map((item, idx) => ({
             description: item.description,
@@ -283,7 +293,13 @@ export class TransactionsService {
 
   // ─── Cancel Transaction ───────────────────────────────────────────────────
 
-  async cancelTransaction(operatorId: string, transactionId: string, userId: string, reason: string) {
+  async cancelTransaction(
+    operatorId: string,
+    transactionId: string,
+    userId: string,
+    reason: string,
+    partner: { source?: string; externalRef?: string } = {},
+  ) {
     const original = await this.prisma.transaction.findFirst({
       where: { id: transactionId, operatorId },
       include: { items: true },
@@ -307,6 +323,9 @@ export class TransactionsService {
       })),
       paymentMode:          original.paymentMode,
       relatedTransactionId: transactionId,
+      isTraining:           original.isTraining,
+      source:               partner.source,
+      externalRef:          partner.externalRef,
     });
 
     await this.prisma.transaction.update({

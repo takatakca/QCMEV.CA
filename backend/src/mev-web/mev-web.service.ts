@@ -416,20 +416,38 @@ export class MevWebService {
       );
 
       const duration = Date.now() - startTime;
+      // MEV-WEB answers business refusals with HTTP 200 and codeRetour ≠ "0": that is NOT a success
+      const codeRetour = (response.data as any)?.codeRetour;
+      const refused = codeRetour !== undefined && codeRetour !== null && String(codeRetour) !== '0';
       await this.prisma.mevRequestLog.update({
         where: { id: logEntry.id },
         data: {
           responsePayload: response.data as object,
           httpStatus: response.status,
+          mevErrorCode: refused ? String(codeRetour) : null,
           duration,
-          success: true,
+          success: !refused,
         },
       });
+
+      if (refused) {
+        const mevMsg = (response.data as any)?.messageFr ?? MEV_ERROR_CODES[String(codeRetour)] ?? 'Refus MEV-WEB';
+        await this.auditLogService.log({
+          operatorId,
+          eventType: AuditEventType.MEV_ERROR,
+          severity: LogSeverity.ERROR,
+          description: `MEV-WEB ${requestType} refusé (${codeRetour}): ${mevMsg}`,
+          metadata: { mevCode: String(codeRetour), mevMsg, httpStatus: response.status, endpoint },
+        });
+        // httpStatus < 500 → isTransientMevError() = false: a refusal, never queued for retry
+        throw new MevWebError(String(codeRetour), mevMsg, response.status);
+      }
 
       this.logger.log(`MEV-WEB ${requestType} → ${response.status} (${duration}ms)`);
       return response.data;
 
     } catch (err: unknown) {
+      if (err instanceof MevWebError) throw err; // refusal already logged above
       const duration = Date.now() - startTime;
       const httpStatus = (err as any)?.response?.status;
       const responseData = (err as any)?.response?.data;

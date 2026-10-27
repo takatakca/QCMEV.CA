@@ -8,6 +8,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { AppModule } from './app.module';
+import { MevWebErrorFilter } from './mev-web/mev-error.filter';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -30,6 +31,8 @@ async function bootstrap() {
       transform:        true,
     }),
   );
+
+  app.useGlobalFilters(new MevWebErrorFilter());
 
   // Global prefix
   app.setGlobalPrefix('api');
