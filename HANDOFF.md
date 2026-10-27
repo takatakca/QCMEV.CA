@@ -301,3 +301,20 @@ CI complète du commit `b14d580` réussie : https://github.com/takatakca/QCMEV.C
 **Code `23824ed`, CI complète Success : https://github.com/takatakca/QCMEV.CA/actions/runs/40410849048.** Les cinq jobs passent : backend, frontend, e2e-simulator, frontend-container, backend-image. Résultats locaux finaux : 203 unitaires, 25 DB (dont le résumé financier), 40+2 contrôles Food Hub, aucun audit de production connu. L’installation normale et les builds ont aussi été réexécutés. Les mises à jour documentaires suivantes ne modifient pas le code vérifié.
 
 Tous les correctifs sont sur `fix/backend-readiness`. Un pointeur et AGENTS.md sont sauvegardés sur `main` pour retrouver cette branche; le code applicatif main n’a pas été déployé ou migré. Aucun accès cible, envoi de courriel, dépôt OneDrive, clé HSM ou certification n’a été inventé. Les limitations et les fonctions encore absentes sont explicites dans READINESS.md et CERTIFICATION.md. Pas de processus ou surveillance utilisateur laissé en arrière-plan; les jobs CI mentionnés ont réellement terminé.
+
+
+## 2026-10-27 — Vidéo de démonstration (répétition) — branche `claude/nice-cray-4fhekg`
+
+Branche remise à niveau sur `fix/backend-readiness` (fusion, aucune réécriture; l'API partenaire faite sur l'ancien
+main a été **annulée par revert**, `fix/backend-readiness` la couvrait déjà).
+
+- `tools/demo-video/stack.mjs` : pile jetable sans Docker (PostgreSQL intégré, backend SIMULATOR, CRT + UTL, tableau
+  de bord) qui reste active; refuse de démarrer si ses ports sont pris.
+- `tools/demo-video/record.mjs` : Playwright conduit le vrai tableau de bord, 19 scènes sous-titrées en français,
+  vidéo WebM + MP4. Résultat : `docs/revenu-quebec/demo/takatak-mev-demonstration.mp4` (3 min 08 s), lire son README.
+- Tableau de bord « Nouvelle vente » : choix du document (reçu / addition / estimation / soumission), du service
+  (comptoir / tables / livraison / plateforme), du support (papier / électronique / les deux / aucune) et du mode
+  formation — le backend les acceptait déjà, l'écran ne les offrait pas.
+- `seed:operator` accepte un `name` d'appareil (facultatif).
+- Contrôles : typecheck + lint backend/frontend, 203 tests unitaires passés.
+- **C'est une répétition sur le simulateur**, pas la démonstration officielle (ESSAI + cas SW-77 personnalisés).

@@ -40,6 +40,10 @@ export default function NewTransactionPage() {
     { description: '', quantity: 1, unitPrice: 0, taxCode: 'FP' },
   ]);
   const [paymentMode, setPaymentMode] = useState('CASH');
+  const [documentKind, setDocumentKind] = useState('RECEIPT');
+  const [serviceType, setServiceType] = useState('CMP');
+  const [printFormat, setPrintFormat] = useState('PAP');
+  const [training, setTraining] = useState(false);
   const [tableNumber, setTableNumber] = useState('');
   const [covers, setCovers] = useState('');
   const [tips, setTips]     = useState('');
@@ -82,6 +86,10 @@ export default function NewTransactionPage() {
           unitPrice: Number(i.unitPrice),
         })),
         paymentMode,
+        documentKind,
+        serviceType,
+        printFormat,
+        training,
         tableNumber:    tableNumber || undefined,
         numberOfCovers: covers ? Number(covers) : undefined,
         tipsAmount:     tips ? Number(tips) : undefined,
@@ -220,6 +228,43 @@ export default function NewTransactionPage() {
                 onChange={(e) => setCovers(e.target.value)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2"
               />
+            </div>
+          </div>
+
+          {/* Document (SW-76: type of transaction, service, print medium, training mode) */}
+          <div className="card grid grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="documentKind" className="block text-sm font-medium text-gray-700 mb-1">Document</label>
+              <select id="documentKind" value={documentKind} onChange={(e) => setDocumentKind(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2">
+                <option value="RECEIPT">Reçu de fermeture (paiement reçu)</option>
+                <option value="ADDITION">Addition (avant paiement)</option>
+                <option value="ESTIMATE">Estimation</option>
+                <option value="QUOTE">Soumission</option>
+              </select>
+            </div>
+            <div>
+              <label htmlFor="serviceType" className="block text-sm font-medium text-gray-700 mb-1">Service</label>
+              <select id="serviceType" value={serviceType} onChange={(e) => setServiceType(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2">
+                <option value="CMP">Au comptoir</option>
+                <option value="TBL">Aux tables</option>
+                <option value="LVR">Livraison par l&apos;exploitant</option>
+                <option value="LVT">Plateforme numérique</option>
+              </select>
+            </div>
+            <div>
+              <label htmlFor="printFormat" className="block text-sm font-medium text-gray-700 mb-1">Support de la facture</label>
+              <select id="printFormat" value={printFormat} onChange={(e) => setPrintFormat(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2">
+                <option value="PAP">Papier</option>
+                <option value="ELE">Électronique</option>
+                <option value="PEL">Papier et électronique</option>
+                <option value="NON">Aucune (refusée par le client)</option>
+              </select>
+            </div>
+            <div className="flex items-end">
+              <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                <input id="training" type="checkbox" checked={training} onChange={(e) => setTraining(e.target.checked)} />
+                Mode formation (document sans valeur)
+              </label>
             </div>
           </div>
 

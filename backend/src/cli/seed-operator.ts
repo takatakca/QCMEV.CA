@@ -29,7 +29,7 @@ interface SeedFile {
   operator: { name: string; neq: string; noTPS: string; noTVQ: string; address?: string; city?: string; postalCode?: string; addressUtc?: string };
   admin: { username: string; password: string; firstName?: string; lastName?: string; mevUserName?: string };
   staff?: Array<{ username: string; password: string; mevUserName?: string; role?: string; externalId?: string; firstName?: string; lastName?: string }>;
-  devices: Array<{ serialNumber: string; fileNumber: string; authorizationCode: string; foodhubLocationId?: string; description?: string }>;
+  devices: Array<{ serialNumber: string; name?: string; fileNumber: string; authorizationCode: string; foodhubLocationId?: string; description?: string }>;
   foodhubTenantId?: string;
 }
 
@@ -73,8 +73,8 @@ async function main(): Promise<void> {
       const existing = await prisma.device.findUnique({ where: { serialNumber: d.serialNumber } });
       if (existing && existing.operatorId !== operator.id) fail(`device ${d.serialNumber} belongs to another operator`);
       const dev = existing
-        ? await prisma.device.update({ where: { id: existing.id }, data: { fileNumber: d.fileNumber, description: d.description } })
-        : await prisma.device.create({ data: { operatorId: operator.id, serialNumber: d.serialNumber, deviceType: 'SERVER', fileNumber: d.fileNumber, description: d.description } });
+        ? await prisma.device.update({ where: { id: existing.id }, data: { fileNumber: d.fileNumber, description: d.description, ...(d.name ? { name: d.name } : {}) } })
+        : await prisma.device.create({ data: { operatorId: operator.id, serialNumber: d.serialNumber, name: d.name, deviceType: 'SERVER', fileNumber: d.fileNumber, description: d.description } });
       await prisma.device.update({ where: { id: dev.id }, data: { authorizationCodeEnc: vault.encrypt(d.authorizationCode, `auth:${dev.id}`) } });
       devices.push({ id: dev.id, serialNumber: dev.serialNumber, locationId: d.foodhubLocationId });
       if (d.foodhubLocationId) {
