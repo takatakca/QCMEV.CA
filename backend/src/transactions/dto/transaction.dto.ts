@@ -62,6 +62,9 @@ export class CreateTransactionBodyDto {
   @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0)
   tipsAmount?: number;
 
+  @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0)
+  discountAmount?: number;
+
   /** ANN / COR / NDC — the transaction being cancelled / corrected / credited */
   @IsOptional() @IsUUID()
   relatedTransactionId?: string;

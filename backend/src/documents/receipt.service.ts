@@ -32,10 +32,7 @@ export class ReceiptService {
     }
 
     return {
-      operator: {
-        name: tx.operator.name, neq: tx.operator.neq, address: tx.operator.address, city: tx.operator.city,
-        tpsNumber: tx.operator.tpsNumber, tvqNumber: tx.operator.tvqNumber,
-      },
+      operator: { name: tx.operator.name, neq: tx.operator.neq, address: tx.operator.address },
       device:   { serialNumber: tx.device.serialNumber },
       transaction: {
         number:           tx.transactionNumber,
@@ -86,9 +83,7 @@ export class ReceiptService {
     divider();
     line(data.operator.name);
     line(`NEQ: ${data.operator.neq}`);
-    if (data.operator.address) line(data.operator.address);
-    if (data.operator.tpsNumber) line(`TPS: ${data.operator.tpsNumber}`);
-    if (data.operator.tvqNumber) line(`TVQ: ${data.operator.tvqNumber}`);
+    line(data.operator.address ?? '');
     divider();
     line(`Date: ${data.transaction.civilDate.slice(0,4)}-${data.transaction.civilDate.slice(4,6)}-${data.transaction.civilDate.slice(6)}`);
     line(`Transaction: ${data.transaction.number}`);
@@ -102,11 +97,8 @@ export class ReceiptService {
     line(`Sous-total:  $${data.transaction.subtotal.toFixed(2)}`);
     line(`TPS (5%):    $${data.transaction.tpsAmount.toFixed(2)}`);
     line(`TVQ (9.975%):$${data.transaction.tvqAmount.toFixed(2)}`);
+    if (data.transaction.tipsAmount) line(`Pourboire:   $${data.transaction.tipsAmount.toFixed(2)}`);
     line(`TOTAL:       $${data.transaction.totalAmount.toFixed(2)}`);
-    if (data.transaction.tipsAmount) {
-      line(`Pourboire:   $${data.transaction.tipsAmount.toFixed(2)}`);
-      line(`Payé:        $${(data.transaction.totalAmount + data.transaction.tipsAmount).toFixed(2)}`);
-    }
     divider();
     line(data.mevMention);
     line('Merci! Thank you!');

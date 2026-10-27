@@ -39,7 +39,6 @@ import { TransactionsController } from './transactions/transactions.controller';
 
 // Receipts
 import { ReceiptService } from './documents/receipt.service';
-import { PublicReceiptController } from './documents/public-receipt.controller';
 
 // Operators
 import { OperatorsService } from './operators/operators.service';
@@ -51,12 +50,6 @@ import { DevicesController } from './devices/devices.controller';
 
 // Offline queue
 import { OfflineQueueService } from './offline/offline-queue.service';
-
-// Partner API (Clover app, Food Hub)
-import { PartnerService } from './partner/partner.service';
-import { PartnerController } from './partner/partner.controller';
-import { PartnerKeysController } from './partner/partner-keys.controller';
-import { ApiKeyGuard } from './partner/api-key.guard';
 
 // Reports
 import { ReportsService } from './reports/reports.service';
@@ -81,9 +74,6 @@ import { ReportsController } from './reports/reports.controller';
     DevicesController,
     ReportsController,
     MevSimulatorController,
-    PartnerController,
-    PublicReceiptController,
-    PartnerKeysController,
   ],
   providers: [
     PrismaService,
@@ -100,8 +90,6 @@ import { ReportsController } from './reports/reports.controller';
     DevicesService,
     OfflineQueueService,
     ReportsService,
-    PartnerService,
-    ApiKeyGuard,
   ],
 })
 export class AppModule {}

@@ -44,6 +44,7 @@ export class TransactionsController {
       tableNumber:   body.tableNumber,
       numberOfCovers: body.numberOfCovers,
       tipsAmount:    body.tipsAmount,
+      discountAmount: body.discountAmount,
       relatedTransactionId: body.originalTransactionId ?? body.relatedTransactionId,
       isTraining:    body.isTraining ?? false,
     });

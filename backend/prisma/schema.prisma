@@ -115,8 +115,6 @@ enum AuditEventType {
   AUTH_LOGIN
   AUTH_LOGOUT
   SYSTEM_ERROR
-  API_KEY_CREATED
-  API_KEY_REVOKED
 }
 
 enum LogSeverity {
@@ -179,7 +177,6 @@ model Operator {
   mevRequestLogs        MevRequestLog[]
   userReports           UserReport[]
   thirdPartyConventions ThirdPartyConvention[]
-  apiKeys               ApiKey[]
 }
 
 model Device {
@@ -191,7 +188,6 @@ model Device {
   model           String? // Hardware model
   firmwareVersion String? // Firmware / OS version reported by the device
   description     String?
-  externalId      String? // Device id in the partner POS (e.g. Clover device serial) — partner API auto-registration
   offlineMode     Boolean    @default(false)
   offlineSince    DateTime? // When the device entered offline mode (null when online) — SW-76 §4.7
   lastSyncAt      DateTime? // Last successful sync with MEV-WEB
@@ -203,7 +199,6 @@ model Device {
   transactions Transaction[]
   offlineQueue OfflineQueue[]
 
-  @@unique([operatorId, externalId])
   @@index([operatorId])
 }
 
@@ -216,7 +211,6 @@ model SEVUser {
   lastName     String
   role         UserRole  @default(CASHIER)
   mevUserId    String? // identifiantUtilisateur returned by MEV-WEB UTL request
-  externalId   String? // Employee id in the partner POS (e.g. Clover employee id) — partner API
   isActive     Boolean   @default(true)
   lastLoginAt  DateTime? // Updated on each successful login
   createdAt    DateTime  @default(now())
@@ -224,9 +218,7 @@ model SEVUser {
 
   operator     Operator      @relation(fields: [operatorId], references: [id])
   transactions Transaction[]
-  apiKeys      ApiKey[]
 
-  @@unique([operatorId, externalId])
   @@index([operatorId])
 }
 
@@ -284,9 +276,6 @@ model Transaction {
   certifiedData        String?           @db.Text
   isTraining           Boolean           @default(false)
   relatedTransactionId String? // For cancellations/corrections
-  source               String? // Partner POS that sent the sale (CLOVER, FOODHUB…); null = our own UI
-  externalRef          String? // Partner's id for this record — idempotency key, unique per operator+source
-  receiptToken         String?           @unique // Public electronic receipt link (/r/<token>)
   invoicedAt           DateTime?
   createdAt            DateTime          @default(now())
   updatedAt            DateTime          @updatedAt
@@ -298,7 +287,6 @@ model Transaction {
   modifications TransactionModification[]
 
   @@unique([deviceId, civilDate, transactionNumber])
-  @@unique([operatorId, source, externalRef])
   @@index([operatorId])
   @@index([deviceId])
   @@index([civilDate])
@@ -435,22 +423,4 @@ model OfflineQueue {
   @@index([deviceId])
   @@index([transactionId])
   @@index([status])
-}
-
-// Partner API keys (Clover app, Food Hub…). Only the SHA-256 of the key is stored; the key is shown once.
-model ApiKey {
-  id         String    @id @default(uuid())
-  operatorId String
-  userId     String // SEV user that signs the partner's sales when no employee is given (must be MEV-registered)
-  label      String
-  prefix     String // First characters of the key, to recognise it in lists
-  keyHash    String    @unique
-  lastUsedAt DateTime?
-  revokedAt  DateTime?
-  createdAt  DateTime  @default(now())
-
-  operator Operator @relation(fields: [operatorId], references: [id])
-  user     SEVUser  @relation(fields: [userId], references: [id])
-
-  @@index([operatorId])
 }
