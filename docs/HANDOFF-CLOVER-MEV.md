@@ -2,7 +2,9 @@
 
 Read this first. Any agent or person can continue from here. Nothing below is merged into `main` (the owner merges).
 The same text lives in 3 places, updated together: QCMEV.CA `docs/HANDOFF-CLOVER-MEV.md`, foodhubca
-`docs/HANDOFF-CLOVER-MEV.md`, and the Google Drive doc « HANDOFF — QCMEV + Clover + Food Hub (2026-10-27) ».
+`docs/HANDOFF-CLOVER-MEV.md`, and Google Drive « HANDOFF — QCMEV + Clover + Food Hub — LIVE (…) » (the Drive
+connector cannot edit a doc: each update is a new doc with the newest time in its title; older ones say "superseded").
+If they differ, GitHub wins.
 
 ## LIVE STATUS (newest first — read this line, then continue)
 - 2026-10-27 night — **#14 self-serve onboarding: code done and pushed, docs + build checks in progress.**
@@ -81,8 +83,15 @@ official demonstration.** Re-record with ESSAI + Revenu Québec's personalized S
 |---|---|
 | `73df1e4` | Clover register sales → Takatak MEV invoices (`lib/foodhub/mev/clover-register.ts`, `map.ts toMevSaleFromRegister`, hooks/outbox model `pos`). Off unless `FOODHUB_MEV_CLOVER_REGISTER=on`. Paid → sale, refund/void/delete → credit note, items refunded → credit note + corrected receipt, wrong Clover tax rate → held for a person. Docs: `docs/MEV_INTEGRATION.md` § 10 |
 | `72b9c18` | **TAKATAK MEV = third Clover app** in the registry (`CLOVER_MEV_APP_ID/_SECRET/_WEBHOOK_AUTH`, OAuth start/callback, webhook `/api/foodhub/webhooks/clover/mev`), **device endpoint** `/api/foodhub/mev/clover-device/receipt|print|copy` (merchant's Clover token checked with Clover). Docs: `docs/CLOVER_MULTI_APP.md` § TAKATAK MEV |
-| `8eec7e5` (WIP) | **Android app** `apps/clover-mev-android` (Kotlin; Clover SDK 341 API names verified from the real library). README there |
-Checks (before the Android commit): typecheck, lint 0 errors, 1721 tests, `next build --webpack`, `verify:foodhub` 617/0.
+| `8eec7e5` + `e8cf2c5` | **Android app** `apps/clover-mev-android` (Kotlin; Clover SDK 341 API names verified from the real library); builds, 8/8 tests. README there |
+| `0042760` | Catch-up poll never skips a sale on a busy merchant (oldest change first, resumes after the last order read) |
+| `50509e0` | **Self-serve onboarding** of App Market merchants (`lib/foodhub/mev/clover-merchants.ts`, welcome page steps) |
+Checks after `50509e0`: typecheck, lint 0 errors, 1728 tests (webpack build + `verify:foodhub` to re-run).
+
+### QCMEV.CA — later commits on `claude/nice-cray-4fhekg`
+| Commit | What |
+|---|---|
+| `cc61264` | Dashboard sign-up page `/register`; « Cuisines Food Hub » pre-filled from TAKATAK MEV |
 
 ## NOT DONE — exact next steps, in order
 1. ~~Android build~~ **DONE**: `./gradlew test assembleDebug` OK (Clover SDK 341), 8/8 unit tests, debug APK 4.4 MB
@@ -97,8 +106,9 @@ Checks (before the Android commit): typecheck, lint 0 errors, 1721 tests, `next 
 6. Revenu Québec (owner): send the SW-10 dossier (`docs/revenu-quebec/REPRISE.md`), get DEV/ESSAI access + SW-73 docs +
    personalized SW-77 cases, then record the official demonstration with `tools/demo-video` pointed at ESSAI.
    Ask RQ in writing whether a Clover-register intake through Food Hub is inside the certified scope.
-7. Not built: self-serve onboarding of App Market merchants (today each merchant = a QCMEV operator with its NEQ,
-   authorization code and certificate + a Food Hub kitchen code, by hand), KMS/HSM key custody (PROD refused until then).
+7. ~~Self-serve onboarding of App Market merchants~~ **BUILT** (Food Hub `50509e0`, QCMEV `cc61264`): try it end to end
+   with one real merchant once deployed. Still not built: KMS/HSM key custody (PROD refused until then; the owner picks
+   the provider) and the release-signing config of the APK.
 
 ## Local test recipes (cloud session)
 - QCMEV full run: `mkdir -m 777 /var/tmp/qcmev-localrun && QCMEV_LOCAL_DIR=/var/tmp/qcmev-localrun node tools/local-run/run-local.mjs --skip-unit`
