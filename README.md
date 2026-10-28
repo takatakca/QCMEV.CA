@@ -188,12 +188,13 @@ Food Hub end-to-end checks, a Docker-free local run, production Dockerfiles, Nex
 2. SW-73 / SW-73.A / SW-73.B / SW-73.D → close every row of `SPEC_GAPS.md` (URLs, nesting, formats, signed string, QR,
    receipt layout, CSR subject).
 3. The personalized SW-77 test cases → import them, run in `DEV`, then `ESSAI` (`MEV_CASESSAI`), keep the logs.
-4. Certification number, the production authorization code of the SEV, and a non-exportable key custody (SW-76 §4.2.1;
-   KMS / HSM, not built) → only then `PROD`.
+4. Certification number, the production authorization code of the SEV, and the device keys in Google Cloud KMS at HSM
+   level (SW-76 §4.2.1 non-exportable key: `SEV_KEY_CUSTODY=gcp-kms`, built, docs/revenu-quebec/KEY_CUSTODY.md; the owner
+   creates the KMS key ring and service account) → only then `PROD`.
 
 **Still to build (no Revenu Québec dependency):** Food Hub side of the contract (foodhubca branch
 `feature/mev-qcmev-integration`, PR takatakca/foodhubca#99); certificate revocation (CRT `SUP` with `noSerie`);
-a non-exportable key custody (KMS / HSM); `ANN` / `PSP` workflows; instalments; the dashboard pages for users and the RUT report
+`ANN` / `PSP` workflows; instalments; the dashboard pages for users and the RUT report
 need polish; LICENSE (owner's choice).
 
 **Owner decisions pending:** the license (no LICENSE file yet: until the owner adds one, no license is granted);

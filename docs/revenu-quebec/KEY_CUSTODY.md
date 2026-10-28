@@ -1,56 +1,69 @@
-# Garde des clés privées du SEV (KMS / HSM) — note de conception, 2026-10-27
+# Garde des clés privées du SEV (Google Cloud KMS) — 2026-10-28
 
-**État : pas construit. PROD reste refusé** (`backend/src/config/app-config.ts`) tant que les clés privées des appareils
-sont des clés logicielles exportables. SW-76 (2025-06) § 4.2.1 demande une clé privée **non exportable** en mode SEV.
-Décision du propriétaire attendue : le fournisseur (ci-dessous). Rien n'est codé avant ce choix.
+**État : construit et testé contre un KMS factice local; pas encore contre le vrai Google Cloud KMS.**
+SW-76 (2025-06) § 4.2.1 demande une clé privée **non exportable** en mode SEV. Avec `SEV_KEY_CUSTODY=gcp-kms`, chaque
+clé d’appareil est créée **dans** Google Cloud KMS (algorithme `EC_SIGN_P256_SHA256`, niveau `HSM`) et n’en sort jamais :
+QCMEV garde seulement son nom (scellé AES-256-GCM, dans la même colonne qu’avant — aucune migration) et demande à KMS
+chaque signature. **PROD ne démarre qu’avec `gcp-kms` au niveau HSM** et le numéro de certification; un appareil qui
+aurait encore une clé logicielle ne signe rien en PROD.
 
-## Où la clé privée sert aujourd'hui (à remplacer, rien d'autre)
+## Ce qui est signé par KMS
 
-| Endroit | Usage |
+| Endroit | Signature |
 |---|---|
-| `crypto/csr.ts` `generateKeyAndCsr` | crée la paire P-256 dans Node et signe la demande de certificat (CRT) |
-| `certificates/certificates.service.ts` l. 86–129 | garde la clé chiffrée AES-256-GCM en base (`encryptedPrivateKey`) |
-| `certificates/certificates.service.ts` l. 166–176 `signingMaterial` | déchiffre la clé pour chaque signature |
-| `transactions/transactions.service.ts` l. 160 | `signa.actu` de chaque transaction (`signP256`) |
-| `mev-web/mev-web.service.ts` l. 199 | en-tête `SIGNATRANSM` de chaque envoi (`signP256`) |
-| `reports/reports.ts`, `operators/operators.ts` | passent `signingMaterial` à MEV-WEB (rapport, UTL) |
+| `crypto/csr.ts` `csrForKey` | la demande de certificat (CRT `AJO` / `REM`) |
+| `transactions/transactions.service.ts` | `signa.actu` de chaque transaction |
+| `mev-web/mev-web.service.ts` | l’en-tête `SIGNATRANSM` de chaque envoi (TRX, UTL, DOC, CRT `REM`) |
 
-La clé ne sert **pas** au TLS (aucun certificat client dans les appels HTTPS) : un KMS distant suffit, sans moteur
-OpenSSL ni pilote PKCS#11 dans Node.
+Chaque signature rendue par KMS est vérifiée avec la clé publique avant usage (une réponse fausse ou corrompue n’est
+jamais transmise). Le renouvellement (CRT `REM`) crée une nouvelle clé et **désactive** l’ancienne (pas détruite).
+Code : `backend/src/crypto/key-custody.ts`, `backend/src/crypto/gcp-kms.ts`. API REST v1 + compte de service (JWT),
+aucune dépendance ajoutée. La clé ne sert pas au TLS.
 
-## Ce qui change (même code partout, un seul point d'entrée)
+## Preuves (2026-10-28)
 
-1. Une interface `SevKeyCustody` : `createKey(deviceId) → { keyRef, publicKeySpki }` et
-   `sign(keyRef, data) → signature r||s 64 octets` (le KMS rend du DER : conversion en r||s, comme `dsaEncoding:
-   'ieee-p1363'` aujourd'hui ; test : 88 caractères base64, `verifyP256` avec le certificat).
-2. `software` (l'actuel, SIMULATOR / DEV / ESSAI) et **un** fournisseur KMS derrière la même interface
-   (`SEV_KEY_CUSTODY=software | gcp-kms | aws-kms`).
-3. CRT : la demande PKCS#10 est construite avec la clé publique du KMS et signée par `sign()` (la partie « à signer »
-   du CSR est assemblée en ASN.1, puis la signature y est ajoutée).
-4. En base : `keyRef` (le nom de la clé dans le KMS) au lieu de `encryptedPrivateKey`. Renouvellement (CRT REM) = une
-   nouvelle version de clé, l'ancienne désactivée après l'acceptation du nouveau certificat.
-5. `app-config.ts` : PROD accepté seulement avec un fournisseur KMS et `QCMEV_CERTIFICATION_NUMBER`.
-6. Tests : un faux KMS (clé en mémoire, même interface) pour toute la suite ; un test opt-in contre le vrai KMS.
+- Tests unitaires `backend/test/key-custody.spec.ts` (12) contre un KMS en mémoire qui signe le condensé SHA-256 comme
+  le vrai (`backend/test/fake-gcp-kms.ts`) : création HSM (attente `PENDING_GENERATION` → `ENABLED`), signature
+  88 caractères vérifiée, CSR signé dans KMS et vérifié, réponse corrompue refusée, renouvellement désactive l’ancienne
+  clé, compte de service refusé, configuration PROD. Suite complète : 217 tests.
+- Parcours complet sur le simulateur avec le KMS factice comme serveur HTTP (`backend/test/fake-gcp-kms-server.ts`) :
+  certificat de l’appareil de démo, inscription d’un restaurant dans le navigateur (`tools/demo-video/check-signup.mjs`,
+  15/15), vente Food Hub puis remboursement (`foodhubca tests/mev-qcmev-live.test.ts`, 2/2) — toutes les signatures
+  faites par KMS (2 clés HSM, 11 signatures), puis renouvellement : ancienne clé `DISABLED`, nouvelle `ENABLED`.
 
-## Fournisseurs (tous font ECDSA P-256 / SHA-256, clé non exportable)
+## Mise en place par le propriétaire (Google Cloud, une fois)
 
-| | Google Cloud KMS | AWS KMS | Azure Key Vault (Premium / Managed HSM) |
-|---|---|---|---|
-| Algorithme | `EC_SIGN_P256_SHA256` | `ECC_NIST_P256` + `ECDSA_SHA_256` | `P-256` / `ES256` |
-| Protection matérielle | niveau `HSM` (FIPS 140-2 niveau 3) | HSM du service | Premium (HSM) ou Managed HSM |
-| Région au Québec | `northamerica-northeast1` (Montréal) | `ca-central-1` (Montréal) | Canada Est (Québec) |
-| Coût | par clé et par opération (vérifier le tarif du jour) | idem | idem |
+```sh
+gcloud config set project <projet>
+gcloud services enable cloudkms.googleapis.com
+gcloud kms keyrings create qcmev-sev --location northamerica-northeast1      # Montréal
+gcloud iam service-accounts create qcmev-kms --display-name "Takatak MEV — clés SEV"
+# Droits minimaux sur ce trousseau seulement (créer, lire la clé publique, signer, désactiver; jamais détruire ni importer)
+gcloud iam roles create qcmevSevKeys --project <projet> --permissions \
+  cloudkms.cryptoKeys.create,cloudkms.cryptoKeyVersions.get,cloudkms.cryptoKeyVersions.viewPublicKey,cloudkms.cryptoKeyVersions.useToSign,cloudkms.cryptoKeyVersions.update
+gcloud kms keyrings add-iam-policy-binding qcmev-sev --location northamerica-northeast1 \
+  --member serviceAccount:qcmev-kms@<projet>.iam.gserviceaccount.com --role projects/<projet>/roles/qcmevSevKeys
+gcloud iam service-accounts keys create qcmev-kms.json --iam-account qcmev-kms@<projet>.iam.gserviceaccount.com
+```
 
-**Recommandation : Google Cloud KMS, niveau HSM, région Montréal** — même compte Google que le reste de TAKATAK,
-données au Québec (Loi 25), une clé par appareil SEV. AWS KMS au même niveau si l'hébergement passe chez AWS.
+Puis dans l’environnement du serveur (Coolify, jamais dans git) :
+
+```
+SEV_KEY_CUSTODY=gcp-kms
+QCMEV_GCP_KMS_KEY_RING=projects/<projet>/locations/northamerica-northeast1/keyRings/qcmev-sev
+QCMEV_GCP_KMS_PROTECTION=HSM
+QCMEV_GCP_KMS_CREDENTIALS_JSON=<contenu de qcmev-kms.json>   (ou QCMEV_GCP_KMS_CREDENTIALS_FILE=<chemin>)
+```
+
+Premier essai conseillé en ESSAI : demander le certificat d’un appareil, vérifier dans la console Google Cloud que la
+clé est apparue (niveau HSM), faire une vente test. Coût : par clé (une par appareil) et par signature — voir le tarif
+du jour de Google Cloud KMS.
+
+**Disponibilité :** sans réponse de KMS, aucune facture ne peut être signée. Garder QCMEV et le trousseau dans la même
+région; une panne KMS se voit comme un appareil non prêt.
 
 ## À demander à Revenu Québec (par écrit, avec le dossier SW-10)
 
-- Une clé gardée dans un HSM infonuagique (KMS) et utilisée par le SEV par appel réseau satisfait-elle SW-76 § 4.2.1
-  « clé privée non exportable » pour un SEV infonuagique ?
-- Une clé par appareil (IDAPPRL), comme aujourd'hui : confirmé ?
-
-## Estimation
-
-Environ une journée de code et de tests après le choix, plus la création du compte / trousseau KMS par le
-propriétaire (identifiants dans l'environnement, jamais dans git).
+- Une clé gardée dans un HSM infonuagique (Google Cloud KMS, niveau HSM) et utilisée par le SEV par appel réseau
+  satisfait-elle SW-76 § 4.2.1 « clé privée non exportable » pour un SEV infonuagique ?
+- Une clé par appareil (IDAPPRL), comme aujourd’hui : confirmé ?

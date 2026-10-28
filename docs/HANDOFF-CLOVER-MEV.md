@@ -7,6 +7,12 @@ connector cannot edit a doc: each update is a new doc with the newest time in it
 If they differ, GitHub wins.
 
 ## LIVE STATUS (newest first — read this line, then continue)
+- 2026-10-28 — **#7 key custody BUILT** (QCMEV `dc33f15` + docs): `SEV_KEY_CUSTODY=gcp-kms` creates each device key in
+  Google Cloud KMS (HSM, never exported) and has it sign CSR, `signa.actu`, `SIGNATRANSM`; PROD loads only with it.
+  Proven: 217 unit tests; full run on the simulator with a local fake KMS server — browser sign-up 15/15, Food Hub
+  sale + refund 2/2, every signature by KMS (2 HSM keys, 11 signatures), renewal disables the old key. Not yet against
+  the real Google Cloud KMS: owner steps in `docs/revenu-quebec/KEY_CUSTODY.md`. **Next:** open the 2 PRs (owner asked
+  « finalize »), then nothing left in code: owner + Revenu Québec steps only.
 - 2026-10-27 night (5) — **#7 key custody: design note written, code waits for the owner's choice.**
   `docs/revenu-quebec/KEY_CUSTODY.md` (QCMEV): the 6 places the device key is used, the interface, provider table,
   recommendation (Google Cloud KMS, HSM level, Montréal region), questions for RQ, ~1 day of code after the choice.
@@ -73,7 +79,7 @@ environment yet.** Do not tell RQ it is "guaranteed error-free": ask for the nex
 | 4 | DEV/ESSAI access, SW-73 documents, personalized SW-77 cases | ❌ RQ gives them after step 3 | RQ |
 | 5 | SW-77 cases run in ESSAI + official demonstration video | ❌ needs step 4 | code + owner |
 | 6 | RQ certification / attestation | ❌ needs step 5 | RQ |
-| 7 | Private-key custody in KMS/HSM (PROD is refused without it) | ❌ not built; design ready (`docs/revenu-quebec/KEY_CUSTODY.md`), waits for the owner's provider choice | owner, then code |
+| 7 | Private-key custody (non-exportable key) | ✅ built: Google Cloud KMS, HSM (`SEV_KEY_CUSTODY=gcp-kms`), proven on the simulator with a fake KMS; ❌ owner creates the real key ring + service account (`docs/revenu-quebec/KEY_CUSTODY.md`) | code ✅ + owner |
 | 8 | Food Hub sends its sales to QCMEV (PR #99) | ✅ done, 617/617 e2e | code |
 | 9 | Clover register sales → invoices (feature/mev-clover-register) | ✅ done, tests green; PR not opened (needs owner OK) | code |
 | 10 | TAKATAK MEV Clover app: backend (OAuth, webhook, device endpoint) | ✅ done | code |
