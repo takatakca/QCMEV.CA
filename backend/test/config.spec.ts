@@ -42,7 +42,7 @@ describe('configuration: no default secret, the environment really decides', () 
     expect(() => loadConfig({ ...good(), MEV_ENVIRONMENT: 'ESSAI', MEV_WEB_BASE_URL: 'https://example.invalid' })).toThrow(ConfigError);
     // Even certified, PROD waits for a non-exportable key custody (SW-76 §4.2.1).
     expect(() => loadConfig({ ...good(), ...ids, MEV_ENVIRONMENT: 'PROD', QCMEV_CERTIFICATION_NUMBER: 'TEST-NUMBER' })).toThrow(/non-exportable/);
-    expect(() => loadConfig({ ...good(), SEV_KEY_CUSTODY: 'hsm' })).toThrow(/not built/);
+    expect(() => loadConfig({ ...good(), SEV_KEY_CUSTODY: 'hsm' })).toThrow(/software or gcp-kms/);
     expect(essai.keyCustody).toBe('software');
   });
 

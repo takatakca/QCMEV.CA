@@ -76,6 +76,44 @@ export async function generateKeyAndCsr(subject: CsrSubject): Promise<GeneratedC
   return { csrPem: csr.toString('pem'), privateKeyPem };
 }
 
+/** The bytes of a WebCrypto BufferSource. */
+function bytesOf(data: BufferSource): Buffer {
+  return ArrayBuffer.isView(data) ? Buffer.from(data.buffer, data.byteOffset, data.byteLength) : Buffer.from(data as ArrayBuffer);
+}
+
+/**
+ * The same CSR (subject, ECDSA P-256 / SHA-256) for a key held outside this process (Google Cloud KMS, key-custody.ts):
+ * the request is assembled here and only its signature is asked from the key. Checked before it is returned.
+ */
+export async function csrForKey(subject: CsrSubject, key: { publicKey: crypto.KeyObject; signP1363(data: Buffer): Promise<Buffer> }): Promise<string> {
+  const subtle = crypto.webcrypto.subtle;
+  const publicKey = await subtle.importKey('spki', key.publicKey.export({ type: 'spki', format: 'der' }), P256_ALG, true, ['verify']);
+  // Stands for the remote private key: the generator reads its algorithm and hands it back to sign().
+  const remote = { type: 'private', extractable: false, algorithm: { name: 'ECDSA', namedCurve: 'P-256' }, usages: ['sign'] };
+  const remoteCrypto = {
+    getRandomValues: <T extends ArrayBufferView | null>(a: T) => crypto.webcrypto.getRandomValues(a as never) as T,
+    subtle: new Proxy(subtle, {
+      get(target, prop) {
+        if (prop === 'sign') {
+          return async (alg: unknown, k: unknown, data: BufferSource) => {
+            if (k !== remote) return target.sign(alg as never, k as never, data as never);
+            const sig = await key.signP1363(bytesOf(data));
+            return sig.buffer.slice(sig.byteOffset, sig.byteOffset + sig.byteLength);
+          };
+        }
+        const v = Reflect.get(target, prop, target);
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    }),
+  };
+  const csr = await x509.Pkcs10CertificateRequestGenerator.create(
+    { name: csrSubjectString(subject), keys: { publicKey: publicKey as unknown as CryptoKey, privateKey: remote as unknown as CryptoKey }, signingAlgorithm: P256_ALG },
+    remoteCrypto as unknown as Crypto,
+  );
+  if (!(await csr.verify(crypto.webcrypto as unknown as Crypto))) throw new Error('the CSR signature does not verify with the key');
+  return csr.toString('pem');
+}
+
 /** The CSR body without PEM armour or line breaks (S1 sends it this way; SPEC). */
 export function csrBody(csrPem: string): string {
   return csrPem.replace(/-----(BEGIN|END) CERTIFICATE REQUEST-----/g, '').replace(/\s+/g, '');

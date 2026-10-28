@@ -28,7 +28,7 @@ import { canonicalJson } from '../common/canonical-json';
 import { lineTotal, mevAmount, TaxCode } from '../common/money';
 import { safeErrorMessage } from '../common/redact';
 import { civilTime } from '../common/time';
-import { FIRST_PRECED, GENESIS_HASH, nextHashChain, signP256 } from '../crypto/ecdsa';
+import { FIRST_PRECED, GENESIS_HASH, nextHashChain } from '../crypto/ecdsa';
 import { CertificatesService, DeviceNotReadyError } from '../certificates/certificates.service';
 import { AuditLogService } from '../logging/audit-log.service';
 import { MevUnreachableError, MevWebService } from '../mev-web/mev-web.service';
@@ -157,7 +157,7 @@ export class TransactionsService {
           },
           { noTPS: operator.noTPS, noTVQ: operator.noTVQ },
         );
-        const signature = signP256(material.privateKey, signedString);
+        const signature = await material.sign(signedString);
         const full: TransCore = { ...core, signa: { actu: signature, preced, datActu: now.datTrans } };
         // Never store (and later send) a transaction that would fail the runtime check.
         assertTransCore(full);

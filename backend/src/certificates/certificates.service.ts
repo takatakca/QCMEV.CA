@@ -1,14 +1,18 @@
 /**
- * SEV certificates (CRT): ECDSA P-256 key pair + CSR, request to MEV-WEB, storage of the SEV certificate
- * (private key AES-256-GCM encrypted) and of MEV-WEB's certificate, IDAPPRL saved on the device.
+ * SEV certificates (CRT): ECDSA P-256 key + CSR, request to MEV-WEB, storage of the SEV certificate and of MEV-WEB's
+ * certificate, IDAPPRL saved on the device.
  *
- * The decrypted private key is never cached: it is decrypted for each signature and dropped.
+ * The key comes from the key custody (crypto/key-custody.ts): a software key sealed AES-256-GCM (SIMULATOR / DEV /
+ * ESSAI), or a non-exportable key in Google Cloud KMS whose name only is stored (PROD). A software key is never cached:
+ * it is decrypted for each signature and dropped. In PROD a device still holding a software key signs nothing.
  */
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { AuditEventType, CertificateType, LogSeverity } from '@prisma/client';
 import * as crypto from 'crypto';
 import { certThumbprint } from '../crypto/ecdsa';
-import { addressUtcOf, csrBody, generateKeyAndCsr } from '../crypto/csr';
+import { APP_CONFIG, AppConfig } from '../config/app-config';
+import { addressUtcOf, csrBody, csrForKey } from '../crypto/csr';
+import { KEY_CUSTODY, SevKeyCustody } from '../crypto/key-custody';
 import { KEY_VAULT, KeyVault } from '../crypto/key-vault';
 import { AuditLogService } from '../logging/audit-log.service';
 import { classifyErrors } from '../mev-web/mev-web.types';
@@ -40,6 +44,8 @@ export class CertificatesService {
     private readonly mevWeb: MevWebService,
     private readonly audit: AuditLogService,
     @Inject(KEY_VAULT) private readonly vault: KeyVault,
+    @Inject(KEY_CUSTODY) private readonly custody: SevKeyCustody,
+    @Inject(APP_CONFIG) private readonly cfg: AppConfig,
   ) {}
 
   /** CRT AJO: the device's first certificate (new key pair + CSR), both certificates and the IDAPPRL stored. */
@@ -74,25 +80,32 @@ export class CertificatesService {
     }
     let signer: SigningMaterial | undefined;
     let noSerie: string | undefined;
+    let replaced: string | null = null;
     if (modif === 'REM') {
       const current = await this.prisma.certificate.findFirst({ where: { deviceId, type: CertificateType.SEV, isActive: true }, orderBy: { createdAt: 'desc' } });
       if (!current?.serialNumber || !device.mevDeviceId) throw new BadRequestException('Nothing to renew: the device has no active certificate (run CRT first)');
       signer = await this.signingMaterial(deviceId);
       noSerie = current.serialNumber;
+      replaced = current.encryptedPrivateKey;
     }
     const authorizationCode = this.vault.decrypt(device.authorizationCodeEnc, `auth:${device.id}`);
     const op = device.operator;
     const nick = (nickname ?? `Certificat ${device.serialNumber}`).slice(0, 32).padEnd(8, '0');
-    const { csrPem, privateKeyPem } = await generateKeyAndCsr({
-      // The UTC of the business address (fixed), not today's daylight-saving offset.
-      utcOffset: addressUtcOf(op),
-      nickname: nick,
-      sector: op.sector,
-      authorizationCode,
-      noTVQ: op.noTVQ,
-      neq: op.neq,
-      fileNumber: device.fileNumber,
-    });
+    // A new key for this certificate, from the custody (software, or created inside Google Cloud KMS).
+    const key = await this.custody.createKey(deviceId);
+    const csrPem = await csrForKey(
+      {
+        // The UTC of the business address (fixed), not today's daylight-saving offset.
+        utcOffset: addressUtcOf(op),
+        nickname: nick,
+        sector: op.sector,
+        authorizationCode,
+        noTVQ: op.noTVQ,
+        neq: op.neq,
+        fileNumber: device.fileNumber,
+      },
+      key,
+    );
 
     await this.audit.log({ operatorId, eventType: AuditEventType.CERTIFICATE_REQUESTED, deviceId, description: `CRT ${modif} for device ${device.serialNumber}` });
     const res = await this.mevWeb.certificateRequest({ id: op.id, noTPS: op.noTPS, noTVQ: op.noTVQ }, authorizationCode, modif, csrBody(csrPem), noSerie, signer);
@@ -108,7 +121,7 @@ export class CertificatesService {
     const sevPem = this.toPem(r.certif);
     const x = new crypto.X509Certificate(sevPem);
     const pubFromCert = x.publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
-    const pubFromKey = crypto.createPublicKey(privateKeyPem).export({ type: 'spki', format: 'der' }).toString('base64');
+    const pubFromKey = key.publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
     if (pubFromCert !== pubFromKey) throw new UnprocessableEntityException('The certificate returned does not match our key');
 
     await this.prisma.$transaction(async (tx) => {
@@ -126,7 +139,8 @@ export class CertificatesService {
           validFrom: new Date(x.validFrom),
           validUntil: new Date(x.validTo),
           pemCertificate: sevPem,
-          encryptedPrivateKey: this.vault.encrypt(privateKeyPem, `key:${deviceId}`),
+          // The sealed key: a software key, or the name of the KMS key (never the key itself).
+          encryptedPrivateKey: key.sealed,
           csrPem: this.vault.encrypt(csrPem, `csr:${deviceId}`),
           isActive: true,
         },
@@ -158,11 +172,17 @@ export class CertificatesService {
       description: `SEV certificate stored after CRT ${modif} (valid until ${x.validTo})`,
       metadata: { modif, validUntil: new Date(x.validTo).toISOString() },
     });
-    this.logger.log(`certificate stored for device ${device.serialNumber} (CRT ${modif})`);
+    // The key the renewal replaced signs nothing more: KMS disables its version (a person can turn it back on).
+    if (replaced) {
+      await this.custody.retire(replaced, deviceId).catch((e: unknown) =>
+        this.audit.log({ operatorId, eventType: AuditEventType.MEV_ERROR, severity: LogSeverity.WARNING, deviceId, description: `the replaced device key could not be disabled: ${(e as Error).message}`.slice(0, 300) }),
+      );
+    }
+    this.logger.log(`certificate stored for device ${device.serialNumber} (CRT ${modif}, key: ${this.custody.kind})`);
     return { status: modif === 'AJO' ? 'issued' : 'renewed', modif, deviceId, mevDeviceId: idApprl, serialNumber: x.serialNumber, validFrom: new Date(x.validFrom), validUntil: new Date(x.validTo) };
   }
 
-  /** Decrypts the device key for one use. Throws when the device has no usable certificate. */
+  /** The device key, ready for one use (software key decrypted, or its KMS signer). Throws when it cannot sign. */
   async signingMaterial(deviceId: string): Promise<SigningMaterial & { validUntil: Date | null; expired: boolean }> {
     const [device, cert] = await Promise.all([
       this.prisma.device.findUnique({ where: { id: deviceId } }),
@@ -171,9 +191,13 @@ export class CertificatesService {
     if (!device?.mevDeviceId || !cert?.pemCertificate || !cert.encryptedPrivateKey || !cert.thumbprint) {
       throw new DeviceNotReadyError('certReady', 'the device has no active SEV certificate (run CRT first)');
     }
-    const privateKey = crypto.createPrivateKey(this.vault.decrypt(cert.encryptedPrivateKey, `key:${deviceId}`));
+    // SW-76 §4.2.1: in PROD only a non-exportable key signs, never a software key (PROD config refuses creating one).
+    if (this.cfg.mevEnvironment === 'PROD' && this.custody.kindOf(cert.encryptedPrivateKey, deviceId) !== 'gcp-kms') {
+      throw new DeviceNotReadyError('certReady', 'this device key is a software key: in PROD only a key held in Google Cloud KMS (HSM) signs — request this device\'s PROD certificate on this server');
+    }
+    const key = await this.custody.open(cert.encryptedPrivateKey, deviceId);
     const expired = !!cert.validUntil && cert.validUntil.getTime() < Date.now();
-    return { privateKey, certPem: cert.pemCertificate, thumbprint: cert.thumbprint, mevDeviceId: device.mevDeviceId, validUntil: cert.validUntil, expired };
+    return { sign: (data: string) => key.sign(data), certPem: cert.pemCertificate, thumbprint: cert.thumbprint, mevDeviceId: device.mevDeviceId, validUntil: cert.validUntil, expired };
   }
 
   /** MEV-WEB's certificate (certifPSI) of the device: it encrypts the QR link data (SW-76 §4.2.1). */

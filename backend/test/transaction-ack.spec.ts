@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import { of } from 'rxjs';
 import { loadConfig } from '../src/config/app-config';
 import { generateP256 } from '../src/crypto/ecdsa';
+import { softwareSigner } from '../src/crypto/key-custody';
 import { MevUnreachableError, MevWebService, transactionAnswers } from '../src/mev-web/mev-web.service';
 import { TransActu } from '../src/mev-web/mev-web.types';
 
@@ -50,7 +51,7 @@ describe('transaction acknowledgements before queue settlement', () => {
     const prisma = { mevRequestLog: { create: jest.fn().mockResolvedValue({ id: 'log' }), update } };
     const http = { post: jest.fn().mockReturnValue(of({ status: 200, data: { retourTrans: {} } })) };
     const svc = new MevWebService(cfg, http as never, prisma as never);
-    const material = { privateKey: crypto.createPrivateKey(generateP256().privateKeyPem), certPem: '', thumbprint: 't', mevDeviceId: 'd' };
+    const material = { sign: softwareSigner(generateP256().privateKeyPem).sign, certPem: '', thumbprint: 't', mevDeviceId: 'd' };
     await expect(svc.sendTransactions({ id: 'op', noTPS: 'x', noTVQ: 'y' }, material, trans)).rejects.toBeInstanceOf(MevUnreachableError);
     expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({ success: false, mevErrorCode: 'INCOMPLETE_ACK' }) }));
     expect(svc.reachability().mevReachable).toBe(false);

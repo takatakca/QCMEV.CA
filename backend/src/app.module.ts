@@ -15,6 +15,8 @@ import { SkipThrottle, ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler
 import { APP_CONFIG, AppConfig } from './config/app-config';
 import { ApiErrorFilter } from './common/errors.filter';
 import { SKIP_ALL_THROTTLES } from './common/throttle';
+import { GcpKmsKeyCustody } from './crypto/gcp-kms';
+import { KEY_CUSTODY, SoftwareKeyCustody } from './crypto/key-custody';
 import { KEY_VAULT, KeyVault } from './crypto/key-vault';
 import { AuthController, AuthService, JwtStrategy } from './auth/auth';
 import { CertificateLifecycleService } from './certificates/certificate-lifecycle.service';
@@ -88,6 +90,8 @@ export class AppModule {
     const providers: DynamicModule['providers'] = [
       { provide: APP_CONFIG, useValue: cfg },
       { provide: KEY_VAULT, useValue: new KeyVault(cfg.keyEncryptionKey) },
+      // SEV device keys: software (SIMULATOR / DEV / ESSAI) or Google Cloud KMS (crypto/key-custody.ts, app-config keyCustody).
+      { provide: KEY_CUSTODY, useFactory: (vault: KeyVault) => (cfg.gcpKms ? new GcpKmsKeyCustody(cfg.gcpKms, vault) : new SoftwareKeyCustody(vault)), inject: [KEY_VAULT] },
       { provide: APP_GUARD, useClass: TenantThrottlerGuard },
       { provide: APP_FILTER, useClass: ApiErrorFilter },
       PrismaService,

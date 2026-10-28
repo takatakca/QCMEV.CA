@@ -13,6 +13,7 @@ import * as path from 'path';
 import { of } from 'rxjs';
 import { loadConfig } from '../src/config/app-config';
 import { FIRST_PRECED, generateP256, signP256 } from '../src/crypto/ecdsa';
+import { softwareSigner } from '../src/crypto/key-custody';
 import { httpRejection, MevWebService, readableErrors } from '../src/mev-web/mev-web.service';
 import { classifyErrors, TransActu } from '../src/mev-web/mev-web.types';
 import { OperatorsService } from '../src/operators/operators';
@@ -31,7 +32,7 @@ function harness(status: number, data: unknown) {
   const http = { post: () => of({ status, data }) };
   const prisma = { mevRequestLog: { create: async () => ({ id: 'log' }), update: async (a: any) => (logs.push(a.data), {}) } };
   const svc = new MevWebService(cfg, http as any, prisma as any);
-  const material = { privateKey: crypto.createPrivateKey(keys.privateKeyPem), certPem: '', thumbprint: 't', mevDeviceId: 'SIMDEV' };
+  const material = { sign: softwareSigner(keys.privateKeyPem).sign, certPem: '', thumbprint: 't', mevDeviceId: 'SIMDEV' };
   return { svc, logs, material };
 }
 
@@ -145,7 +146,7 @@ describe('end to end, real services over a stubbed HTTP layer', () => {
       $transaction: async (ops: Promise<unknown>[]) => Promise.all(ops),
       mevRequestLog: { create: async () => ({ id: 'l1' }), update: async () => ({}) },
     };
-    const certificates: any = { signingMaterial: async () => ({ expired: false, privateKey: crypto.createPrivateKey(keys.privateKeyPem), certPem: '', thumbprint: 't', mevDeviceId: 'd' }) };
+    const certificates: any = { signingMaterial: async () => ({ expired: false, sign: softwareSigner(keys.privateKeyPem).sign, certPem: '', thumbprint: 't', mevDeviceId: 'd' }) };
     const audits: any[] = [];
     const audit: any = { log: async (a: any) => void audits.push(a) };
     const mevWeb = new MevWebService(cfg, { post: () => of({ status, data }) } as any, prisma);
@@ -177,7 +178,7 @@ describe('end to end, real services over a stubbed HTTP layer', () => {
       device: { findMany: async () => [{ id: 'dev' }] },
       mevRequestLog: { create: async () => ({ id: 'l1' }), update: async () => ({}) },
     };
-    const certificates: any = { signingMaterial: async () => ({ expired: false, privateKey: crypto.createPrivateKey(keys.privateKeyPem), certPem: '', thumbprint: 't', mevDeviceId: 'd' }) };
+    const certificates: any = { signingMaterial: async () => ({ expired: false, sign: softwareSigner(keys.privateKeyPem).sign, certPem: '', thumbprint: 't', mevDeviceId: 'd' }) };
     const mevWeb = new MevWebService(cfg, { post: () => of({ status: 403, data: { erreur: { listErr: gw() } } }) } as any, prisma);
     const ops = new OperatorsService(cfg, prisma, certificates, mevWeb, { log: async (a: any) => void audits.push(a) } as any);
     await expect(ops.registerSevUser('op', 'u1')).rejects.toMatchObject({ response: { status: 'rejected', errors: [httpRejection(403)] } });

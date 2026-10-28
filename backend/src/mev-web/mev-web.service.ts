@@ -20,12 +20,10 @@
 import { HttpService } from '@nestjs/axios';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { MevRequestType, Prisma } from '@prisma/client';
-import type { KeyObject } from 'crypto';
 import { firstValueFrom } from 'rxjs';
 import { APP_CONFIG, AppConfig } from '../config/app-config';
 import { toAsciiJson } from '../common/ascii-json';
 import { redact, safeErrorMessage } from '../common/redact';
-import { signP256 } from '../crypto/ecdsa';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   classifyErrors,
@@ -112,7 +110,8 @@ export function transactionAnswers(trans: TransActu[], answer: RetourTrans, stat
 }
 
 export interface SigningMaterial {
-  privateKey: KeyObject;
+  /** The device key's signature of `data` (base64, 88 characters): software or Google Cloud KMS (crypto/key-custody.ts). */
+  sign(data: string): Promise<string>;
   certPem: string;
   thumbprint: string;
   mevDeviceId: string;
@@ -196,7 +195,7 @@ export class MevWebService {
     // SW-76 §4.2: ASCII text only. SIGNATRANSM covers exactly the bytes sent.
     const raw = toAsciiJson(body);
     const allHeaders: Record<string, string> = { 'Content-Type': 'application/json', ...(headers as unknown as Record<string, string>) };
-    if (signer) allHeaders.SIGNATRANSM = signP256(signer.privateKey, raw);
+    if (signer) allHeaders.SIGNATRANSM = await signer.sign(raw);
     const url = `${this.cfg.mevBaseUrl}${this.cfg.mevPaths[kind]}`;
     const started = Date.now();
     const log = await this.prisma.mevRequestLog.create({

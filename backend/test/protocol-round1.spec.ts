@@ -20,6 +20,7 @@ import { civilTime } from '../src/common/time';
 import { loadConfig } from '../src/config/app-config';
 import { addressUtcOf, csrSubjectString, generateKeyAndCsr } from '../src/crypto/csr';
 import { FIRST_PRECED, generateP256, verifyP256 } from '../src/crypto/ecdsa';
+import { SoftwareKeyCustody, softwareSigner } from '../src/crypto/key-custody';
 import { CertificatesService } from '../src/certificates/certificates.service';
 import { MevUnreachableError, MevWebService } from '../src/mev-web/mev-web.service';
 import { classifyErrors, TransActu } from '../src/mev-web/mev-web.types';
@@ -45,7 +46,7 @@ function harness(answer: () => any) {
   };
   const prisma = { mevRequestLog: { create: async () => ({ id: 'log' }), update: async (a: any) => (logs.push(a.data), {}) } };
   const svc = new MevWebService(cfg, http as any, prisma as any);
-  const material = { privateKey: crypto.createPrivateKey(keys.privateKeyPem), certPem: '', thumbprint: 't', mevDeviceId: 'SIMDEV' };
+  const material = { sign: softwareSigner(keys.privateKeyPem).sign, certPem: '', thumbprint: 't', mevDeviceId: 'SIMDEV' };
   return { svc, sent, logs, material, publicKeyPem: keys.publicKeyPem };
 }
 
@@ -179,7 +180,8 @@ describe('2. CSR L=: the fixed UTC of the business address', () => {
           return { retourCertif: { listErr: [{ id: 'X', mess: 'stop here', codRetour: '99' }] } };
         },
       };
-      const svc = new CertificatesService(prisma as any, mevWeb as any, { log: async () => undefined } as any, { decrypt: () => 'XXXX-XXXX', encrypt: () => 'e' } as any);
+      const vault = { decrypt: () => 'XXXX-XXXX', encrypt: () => 'e' } as any;
+      const svc = new CertificatesService(prisma as any, mevWeb as any, { log: async () => undefined } as any, vault, new SoftwareKeyCustody(vault), cfg);
       await expect(svc.requestCertificate('op', 'dev')).rejects.toThrow();
     }
     const L = (b64: string) => new x509.Pkcs10CertificateRequest(Buffer.from(b64, 'base64')).subjectName.getField('L')[0];
