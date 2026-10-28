@@ -7,6 +7,12 @@ connector cannot edit a doc: each update is a new doc with the newest time in it
 If they differ, GitHub wins.
 
 ## LIVE STATUS (newest first — read this line, then continue)
+- 2026-10-28 — **Everything code can do is done. PRs opened** (owner said « finalize »): QCMEV
+  https://github.com/takatakca/QCMEV.CA/pull/4 (base `fix/backend-readiness`) and Food Hub
+  https://github.com/takatakca/foodhubca/pull/100 (base `feature/mev-qcmev-integration`, #99). QCMEV full local run
+  green (PostgreSQL 25/25, scenarios 13/13, Food Hub contract 40/40 + 2/2); QCMEV CI green on the branch push. This
+  session is subscribed to both PRs. **Next:** fix any CI failure or review comment on #4 / #100; otherwise only owner
+  and Revenu Québec steps remain (checklist below).
 - 2026-10-28 — **#7 key custody BUILT** (QCMEV `dc33f15` + docs): `SEV_KEY_CUSTODY=gcp-kms` creates each device key in
   Google Cloud KMS (HSM, never exported) and has it sign CSR, `signa.actu`, `SIGNATRANSM`; PROD loads only with it.
   Proven: 217 unit tests; full run on the simulator with a local fake KMS server — browser sign-up 15/15, Food Hub
@@ -81,13 +87,13 @@ environment yet.** Do not tell RQ it is "guaranteed error-free": ask for the nex
 | 6 | RQ certification / attestation | ❌ needs step 5 | RQ |
 | 7 | Private-key custody (non-exportable key) | ✅ built: Google Cloud KMS, HSM (`SEV_KEY_CUSTODY=gcp-kms`), proven on the simulator with a fake KMS; ❌ owner creates the real key ring + service account (`docs/revenu-quebec/KEY_CUSTODY.md`) | code ✅ + owner |
 | 8 | Food Hub sends its sales to QCMEV (PR #99) | ✅ done, 617/617 e2e | code |
-| 9 | Clover register sales → invoices (feature/mev-clover-register) | ✅ done, tests green; PR not opened (needs owner OK) | code |
+| 9 | Clover register sales → invoices (feature/mev-clover-register) | ✅ done, tests green; PR https://github.com/takatakca/foodhubca/pull/100 | code |
 | 10 | TAKATAK MEV Clover app: backend (OAuth, webhook, device endpoint) | ✅ done | code |
 | 11 | TAKATAK MEV Android app (prints invoice + QR) | ✅ builds, 8/8 tests; ❌ never run on a real Clover device | code + owner (Dev Kit) |
 | 12 | Release-signed APK | ✅ build set up to Clover's rules (v1 only, CERT.RSA, targetSdk 25), checked with a throwaway key; ❌ the owner makes the real key and the upload | code ✅ + owner |
 | 13 | App created in the Clover developer dashboard, env in Coolify, APK uploaded, Clover's app review | ❌ | owner |
 | 14 | Self-serve onboarding of App Market merchants | ✅ built; proven end to end on the simulator (browser 15/15 + live Food Hub → QCMEV 2/2); ❌ never tried with a real Clover merchant | code + owner |
-| 15 | Merged and deployed | ❌ owner merges (order in step 5 below) | owner |
+| 15 | Merged and deployed | ❌ owner merges: QCMEV #3 → `fix/backend-readiness` → #4, then Food Hub #99 → #100 | owner |
 
 Questions to put to RQ in writing: (a) is a Clover-register intake through Food Hub inside the certified product;
 (b) a tip added after the bill is printed (Clover "tip adjust"): today the SEV credits the bill and issues a corrected
