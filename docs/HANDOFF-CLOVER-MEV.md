@@ -1,12 +1,22 @@
 # HANDOFF — Revenu Québec (QCMEV) + Clover + Food Hub — 2026-10-27
 
-Read this first. Any agent or person can continue from here. Nothing below is merged into `main` (the owner merges).
+Read this first. Any agent or person can continue from here. Nothing below is merged into `main` yet (2026-10-30).
 The same text lives in 3 places, updated together: QCMEV.CA `docs/HANDOFF-CLOVER-MEV.md`, foodhubca
 `docs/HANDOFF-CLOVER-MEV.md`, and Google Drive « HANDOFF — QCMEV + Clover + Food Hub — LIVE (…) » (the Drive
 connector cannot edit a doc: each update is a new doc with the newest time in its title; older ones say "superseded").
 If they differ, GitHub wins.
 
 ## LIVE STATUS (newest first — read this line, then continue)
+- 2026-10-30 03:30 — **All 4 PRs brought up to date; one QCMEV PR now lands everything.** Food Hub `main` had moved
+  93 commits (premium console, platform screens, Canada taxes #121): merged into #99 (`15dc523`, 8 conflicts resolved,
+  MEV e2e is now section 49) and #99 into #100 (`732c835`). New rule: MEV refuses a kitchen whose province is not Québec
+  (`not_quebec`). CI on #99 then failed one test (`tests/phone-minutes-alerts.test.ts`), root cause a 10-minute window
+  boundary in the test (also on `main`), reproduced and fixed (`e452b03`, carried into #100 `06a1437`). Checks on both:
+  typecheck, lint 0 errors, 1835 / 1861 tests, webpack build, `verify:foodhub` 628/0. QCMEV: `main` (docs only)
+  merged into `claude/nice-cray-4fhekg` (`fedcbc3`), `BACKEND-STATUS.md` + `AGENTS.md` point here (`7ec1091`), and
+  **PR #4 now targets `main`** (it holds #3 + `fix/backend-readiness`; #3 alone conflicts on `HANDOFF.md`).
+  **Next:** watch CI on #4, #99, #100; owner (or agent, per the 2026-10-29 order) merges QCMEV #4, then Food Hub #99,
+  then #100. Honest risk list: section « IS IT BULLETPROOF? » below.
 - 2026-10-28 — **Everything code can do is done. PRs opened** (owner said « finalize »): QCMEV
   https://github.com/takatakca/QCMEV.CA/pull/4 (base `fix/backend-readiness`) and Food Hub
   https://github.com/takatakca/foodhubca/pull/100 (base `feature/mev-qcmev-integration`, #99). QCMEV full local run
@@ -73,6 +83,29 @@ If they differ, GitHub wins.
 - **"Accounting by TAKATAK"**: no repository by that name. Closest: Food Hub's Money section (payout reconciliation,
   internal ledger, Excel / CSV exports for the accountant, nothing posted to QuickBooks) and Facturations' Wave link.
 
+## IS IT BULLETPROOF? (owner asked 2026-10-30) — no, not yet; this is what is solid and what is not
+**Solid (proven by our own tests):** QCMEV 217 unit tests + PostgreSQL 25/25 + scenarios 13/13; Food Hub 1861 tests +
+end to end 628/0; every MEV switch off by default; PROD refused unless the certification number and an HSM key are
+set; every signature checked before it leaves; retries reuse the same key and body (no double invoice); no secret in git.
+
+**Not proven, and each one can break a « final » claim:**
+1. **SW-73 not received.** The signed string, QR content, URLs and CSR subject follow the 2022 sample and our reading
+   (`SPEC_GAPS.md`). When RQ sends SW-73, some of it will likely change.
+2. **Never talked to RQ's real servers.** Only our own simulator, written from the same documents: it proves the code
+   agrees with itself, not with Revenu Québec.
+3. **Never ran on a real Clover device:** payment broadcast, CloverAuth, 80 mm print with QR, refund amount vs tip,
+   Orders webhook timing.
+4. **Google Cloud KMS only tested against a fake.** Real latency, quotas, cost; a KMS outage means no invoice can be
+   signed (the device shows not ready).
+5. **RQ has not answered our scope questions** (Clover intake through Food Hub, tip adjust, cloud HSM key as
+   « non-exportable »).
+6. **Food Hub #99 is bigger than MEV:** it still carries the parts of release #97 that `main` did not take one by one
+   (#55 skeletons, #93 tracking text once, recon/export fixes). Tested together, but a larger review surface.
+7. **Operations:** an offline sale must reach RQ within 48 h; alerts at 15 min and 24 h need someone who acts on them.
+8. **Not code:** the merchant's legal duties, TAKATAK's terms as SEV provider, price and listing of TAKATAK MEV.
+
+**Honest pitch to RQ:** « ready for your DEV / ESSAI tests », never « certified » or « guaranteed error-free ».
+
 ## IS IT "100 % CERTIFIED"? — honest checklist (owner asked 2026-10-27)
 **No. Nobody but Revenu Québec can certify it, and it has not been tested on a real Clover device or in RQ's ESSAI
 environment yet.** Do not tell RQ it is "guaranteed error-free": ask for the next step (DEV/ESSAI access, SW-77 cases).
@@ -81,19 +114,19 @@ environment yet.** Do not tell RQ it is "guaranteed error-free": ask for the nex
 |---|---|---|---|
 | 1 | SEV built: official MEV-WEB protocol, ECDSA signing, offline mode, credit notes, RPR/DUP, user report (QCMEV `fix/backend-readiness` + `claude/nice-cray-4fhekg`) | ✅ done, 205 unit tests + full local run green | code |
 | 2 | Rehearsal video (simulator, fake data) | ✅ done | code |
-| 3 | SW-10 dossier sent to RQ | ❌ not sent | owner |
+| 3 | SW-10 dossier sent to RQ | ⏳ prepared on QCMEV `main` (`docs/revenu-quebec/`: corrected SW-10, board resolution with signature fields, letter; see `REPRISE.md`, `ENVOI-ET-SUIVI.md`); ❌ not signed, not sent | owner |
 | 4 | DEV/ESSAI access, SW-73 documents, personalized SW-77 cases | ❌ RQ gives them after step 3 | RQ |
 | 5 | SW-77 cases run in ESSAI + official demonstration video | ❌ needs step 4 | code + owner |
 | 6 | RQ certification / attestation | ❌ needs step 5 | RQ |
 | 7 | Private-key custody (non-exportable key) | ✅ built: Google Cloud KMS, HSM (`SEV_KEY_CUSTODY=gcp-kms`), proven on the simulator with a fake KMS; ❌ owner creates the real key ring + service account (`docs/revenu-quebec/KEY_CUSTODY.md`) | code ✅ + owner |
-| 8 | Food Hub sends its sales to QCMEV (PR #99) | ✅ done, 617/617 e2e | code |
+| 8 | Food Hub sends its sales to QCMEV (PR #99) | ✅ done, up to date with Food Hub `main` 2026-10-30, e2e 628/0; Québec kitchens only | code |
 | 9 | Clover register sales → invoices (feature/mev-clover-register) | ✅ done, tests green; PR https://github.com/takatakca/foodhubca/pull/100 | code |
 | 10 | TAKATAK MEV Clover app: backend (OAuth, webhook, device endpoint) | ✅ done | code |
 | 11 | TAKATAK MEV Android app (prints invoice + QR) | ✅ builds, 8/8 tests; ❌ never run on a real Clover device | code + owner (Dev Kit) |
 | 12 | Release-signed APK | ✅ build set up to Clover's rules (v1 only, CERT.RSA, targetSdk 25), checked with a throwaway key; ❌ the owner makes the real key and the upload | code ✅ + owner |
 | 13 | App created in the Clover developer dashboard, env in Coolify, APK uploaded, Clover's app review | ❌ | owner |
 | 14 | Self-serve onboarding of App Market merchants | ✅ built; proven end to end on the simulator (browser 15/15 + live Food Hub → QCMEV 2/2); ❌ never tried with a real Clover merchant | code + owner |
-| 15 | Merged and deployed | ❌ owner merges: QCMEV #3 → `fix/backend-readiness` → #4, then Food Hub #99 → #100 | owner |
+| 15 | Merged and deployed | ❌ merge QCMEV #4 (targets `main`, contains #3 + `fix/backend-readiness`), then Food Hub #99, then #100 | owner / agent once green |
 
 Questions to put to RQ in writing: (a) is a Clover-register intake through Food Hub inside the certified product;
 (b) a tip added after the bill is printed (Clover "tip adjust"): today the SEV credits the bill and issues a corrected
