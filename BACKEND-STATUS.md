@@ -1,13 +1,28 @@
-# Reprise backend — 26 octobre 2026
+# Reprise backend — mise à jour du 30 octobre 2026
 
-Les corrections et la fusion du protocole avancé sont sauvegardées sur **`fix/backend-readiness`**. Le main actuel conserve volontairement son code antérieur : **aucun déploiement applicatif ni migration de données réelles n’a été lancé**.
+**Code le plus récent : branche `claude/nice-cray-4fhekg`, PR #4** (https://github.com/takatakca/QCMEV.CA/pull/4).
+Elle contient tout : `main` (dossier administratif SW-10 et notes), `feature/official-protocol-foodhub` (PR #3),
+`fix/backend-readiness` (corrections et preuves du 26 octobre), puis les ventes de la caisse Clover, l’inscription
+libre-service, la garde des clés dans Google Cloud KMS et la vidéo de démonstration. Fusionner **la PR #4** suffit :
+la PR #3 et `fix/backend-readiness` y sont déjà (la PR #3 a un conflit avec `main` sur `HANDOFF.md` seulement; la PR #4
+n’en a aucun). **Aucun déploiement ni migration de données réelles n’a été lancé.**
 
-Lire l’[inventaire complet de livraison](https://github.com/takatakca/QCMEV.CA/blob/fix/backend-readiness/READINESS.md) et les [preuves de vérification](https://github.com/takatakca/QCMEV.CA/blob/fix/backend-readiness/docs/verification/backend-readiness.json) avant de reprendre les anciens travaux. Code final vérifié : **`23824ed`**; notes finales : **`239b905`**. Base du correctif : `5bf6567`; correction du lockfile CI : `b14d580`. Branche issue du main administratif et de `feature/official-protocol-foodhub` (`903e9db`), sans perte des notes/PDF.
+Lire d’abord `docs/HANDOFF-CLOVER-MEV.md` (état en direct, liste de contrôle, ce qui reste au propriétaire et à
+Revenu Québec), puis `READINESS.md`, `CERTIFICATION.md`, `SPEC_GAPS.md` et `docs/revenu-quebec/KEY_CUSTODY.md`.
 
-Résultats locaux : **203 tests unitaires, 25 tests avec PostgreSQL réel, 40+2 contrôles Food Hub**, migrations et dérive, certificats/utilisateurs, ventes/crédits/hors-ligne, reprise et limitation de connexion. Frontend Docker démarré et proxy testé; audits de production : zéro vulnérabilité connue au contrôle. La CI distante a d’abord identifié une entrée Webpack manquante sous npm 10; défaut reproduit et corrigé. **CI finale entièrement réussie : [40410849048](https://github.com/takatakca/QCMEV.CA/actions/runs/40410849048)** — backend, frontend, e2e-simulator, frontend-container et backend-image.
+Résultats vérifiés (simulateur local seulement) : 217 tests unitaires, 25 tests avec PostgreSQL réel, scénarios 13/13,
+contrôles Food Hub 40/40 + 2/2, CI de la PR #4 entièrement verte (backend, frontend, images, e2e-simulator).
+Côté Food Hub : PR #99 et #100 (takatakca/foodhubca), à jour avec leur `main` le 2026-10-30, `verify:foodhub` 628/0.
 
-Ne pas confondre ces contrôles avec la production. Restent : dossier/signatures et accès Revenu Québec, documents/cas officiels, DEV puis ESSAI et certification, garde KMS/HSM des clés non exportables, cible/secrets de déploiement, vérification/migration des bases existantes, validation réelle du côté Food Hub et des plateformes. Construction backend Docker bloquée localement par le dépôt Alpine (403); la CI finale a construit cette image avec succès. Gmail et OneDrive ne sont pas accessibles à l’agent; aucun envoi ni surveillance actif.
+**Takatak MEV n’est pas certifié.** Restent : envoi et signatures du dossier SW-10 (préparé dans
+`docs/revenu-quebec/`, voir `REPRISE.md` et `ENVOI-ET-SUIVI.md`), documents SW-73 / SW-77 et accès DEV puis ESSAI de
+Revenu Québec, cas officiels et certification, trousseau Google Cloud KMS réel (niveau HSM), cible et secrets de
+déploiement, essai sur un vrai appareil Clover.
 
-La question sur l’existence de ventes réelles dans une base QCMEV est en attente. Préserver les données par défaut. La branche ajoute un précontrôle refusant le checksum initial incompatible : ne pas le contourner par une réinitialisation ou une suppression de volume. Aucun travail ne continue en arrière-plan après la fin de la session.
+Ne pas utiliser `down -v`, `migrate reset` ou `migrate resolve` pour contourner le précontrôle de migration : préserver
+les données par défaut.
 
-Pour reprendre : vérifier les changements locaux, récupérer la branche et continuer dessus; **ne pas refaire les corrections sur l’ancien main**. Le dossier administratif reste documenté dans `docs/revenu-quebec/REPRISE.md`.
+Historique (26 octobre) : les corrections avaient été sauvegardées sur `fix/backend-readiness` (code `23824ed`, notes
+`239b905`, CI 40410849048 verte), issue du main administratif et de `feature/official-protocol-foodhub` (`903e9db`).
+
+— signé : Claude (session 01QsaHwL) @ Claude Code cloud · 2026-10-30 03:15

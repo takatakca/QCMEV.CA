@@ -1,274 +1,237 @@
 #!/usr/bin/env ts-node
 /**
- * SW-77 Test Case Runner for Takatak MEV
+ * Takatak MEV — 12 INTERNAL SCENARIOS (these are NOT Revenu Québec's SW-77 test cases).
  * ────────────────────────────────────────────────────────────────────────────
- * Exercises all 12 mandatory test cases against the MEV simulator or a real
- * MEV-WEB environment.
+ * The personalized SW-77 cases come with the partner documents; until then these scenarios exercise the staff API
+ * end to end against the LOCAL SIMULATOR (or DEV once credentials exist): signatures, chain, numbering, taxes,
+ * credit notes, reprints, post-invoice changes, offline mode and the user report.
  *
- * Usage:
- *   npx ts-node scripts/run-test-cases.ts [--env SIMULATOR|DEVELOPMENT|TESTING]
- *
- * Requirements:
- *   - Backend must be running at http://localhost:3001
- *   - A valid JWT token must be set in TAKATAK_TOKEN env var
- *     (obtain via POST /api/auth/login)
- *
- * Test cases per SW-77:
- *   TC-001  Normal sale (ADD) with TPS+TVQ
- *   TC-002  Sale with TPS only
- *   TC-003  Sale with TVQ only
- *   TC-004  Tax-exempt sale
- *   TC-005  Refund/credit note
- *   TC-006  No-sale transaction
- *   TC-007  Cancellation of a prior transaction
- *   TC-008  Offline mode — queue and batch submit
- *   TC-009  Post-invoice price modification (SW-76 §4.6)
- *   TC-010  Post-invoice item removal (SW-76 §4.6)
- *   TC-011  Duplicate receipt request
- *   TC-012  Annual user report (DOC submission)
+ * Run from backend/ (uses the backend's ts-node; no extra dependency, Node 20+ fetch):
+ *   npx ts-node --transpile-only --project tsconfig.json ../scripts/run-test-cases.ts
+ * Env: BACKEND_URL (default http://127.0.0.1:3001), QCMEV_ADMIN_USER, QCMEV_ADMIN_PASSWORD,
+ *      QCMEV_SIM_CONTROL=1 to drive the simulator's mevDown switch (TC-008; SIMULATOR only).
+ * The admin must exist (npm run seed:operator) and the device must have its certificate (POST /devices/:id/certificate).
  */
+import * as crypto from 'crypto';
 
-import axios, { AxiosInstance } from 'axios';
+const BASE = (process.env.BACKEND_URL ?? 'http://127.0.0.1:3001').replace(/\/$/, '');
+const USER = process.env.QCMEV_ADMIN_USER ?? '';
+const PASS = process.env.QCMEV_ADMIN_PASSWORD ?? '';
+const SIM = process.env.QCMEV_SIM_CONTROL === '1';
+const FIRST_PRECED = '='.repeat(88);
 
-const BASE_URL = process.env.BACKEND_URL ?? 'http://localhost:3001';
-const TOKEN    = process.env.TAKATAK_TOKEN ?? '';
-
-if (!TOKEN) {
-  console.error('❌  TAKATAK_TOKEN env var required. Get it via POST /api/auth/login');
-  process.exit(1);
-}
-
-const api: AxiosInstance = axios.create({
-  baseURL: `${BASE_URL}/api`,
-  headers: { Authorization: `Bearer ${TOKEN}` },
-});
-
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-let passed = 0;
-let failed = 0;
+let token = '';
 const results: Array<{ id: string; name: string; status: 'PASS' | 'FAIL'; error?: string }> = [];
 
-function assert(condition: boolean, message: string) {
-  if (!condition) throw new Error(message);
+async function api<T = any>(method: string, path: string, body?: unknown, expect = [200, 201]): Promise<T> {
+  const res = await fetch(`${BASE}/api${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!expect.includes(res.status)) throw new Error(`${method} ${path} → HTTP ${res.status}: ${text.slice(0, 400)}`);
+  return data as T;
 }
 
-async function runTest(id: string, name: string, fn: () => Promise<void>) {
+function assert(cond: unknown, msg: string): asserts cond {
+  if (!cond) throw new Error(msg);
+}
+
+async function run(id: string, name: string, fn: () => Promise<void>) {
   process.stdout.write(`  ${id}  ${name} ... `);
   try {
     await fn();
-    console.log('✅ PASS');
-    passed++;
+    console.log('PASS');
     results.push({ id, name, status: 'PASS' });
-  } catch (err: any) {
-    const msg = err.response?.data?.message ?? err.message ?? String(err);
-    console.log(`❌ FAIL — ${msg}`);
-    failed++;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.log(`FAIL — ${msg}`);
     results.push({ id, name, status: 'FAIL', error: msg });
   }
 }
 
-// ─── Get device id ───────────────────────────────────────────────────────────
-
-async function getFirstDevice(): Promise<string> {
-  const res = await api.get('/devices');
-  if (!res.data.length) throw new Error('No devices registered. Register a device first.');
-  return res.data[0].id;
+/** Taxes as QCMEV must compute them: each tax rounded half-up on its own base. */
+function taxes(baseCents: number) {
+  const r = (num: number, den: number) => Math.sign(baseCents) * Math.floor((Math.abs(baseCents) * num + den / 2) / den);
+  return { tps: r(5, 100), tvq: r(9975, 100000) };
 }
 
-// ─── Test Cases ──────────────────────────────────────────────────────────────
+function checkSigned(tx: any) {
+  assert(typeof tx.signature === 'string' && tx.signature.length === 88, `signature must be 88 characters (got ${tx.signature?.length})`);
+  assert(typeof tx.previousSignature === 'string' && tx.previousSignature.length === 88, 'previous signature must be 88 characters');
+  assert(/^\d{14}$/.test(tx.datTrans), 'datTrans must be AAAAMMJJhhmmss');
+  assert(['-04:00', '-05:00'].includes(tx.utcOffset), 'utc must be -04:00 or -05:00');
+  assert(tx.totalCents === tx.subtotalCents + tx.tpsCents + tx.tvqCents, 'apresTax must equal avantTax + TPS + TVQ');
+}
+
+const item = (description: string, unitPriceCents: number, tax = 'FP', quantity = '1') => ({ description, quantity, unitPriceCents, tax });
+
+async function sale(deviceId: string, items: any[], paymentMode = 'ARG', extra: Record<string, unknown> = {}) {
+  return api('POST', '/transactions', { deviceId, items, paymentMode, serviceType: 'CMP', ...extra });
+}
 
 async function main() {
-  console.log('\n🧪  Takatak MEV — SW-77 Test Cases');
-  console.log('═══════════════════════════════════════════════════════');
-  console.log(`   Backend: ${BASE_URL}`);
-  console.log(`   Date:    ${new Date().toISOString()}`);
-  console.log('───────────────────────────────────────────────────────\n');
+  console.log('\nTakatak MEV — internal scenarios (not SW-77)');
+  console.log(`  backend: ${BASE}   date: ${new Date().toISOString()}\n`);
+  if (!USER || !PASS) throw new Error('QCMEV_ADMIN_USER and QCMEV_ADMIN_PASSWORD are required');
+  token = (await api('POST', '/auth/login', { username: USER, password: PASS }, [200])).accessToken;
+  const devices = await api<any[]>('GET', '/devices');
+  const device = devices.find((d) => d.mevDeviceId);
+  assert(device, 'no certified device: run POST /api/devices/:id/certificate first');
+  const deviceId = device.id as string;
+  const signed: any[] = [];
 
-  const deviceId = await getFirstDevice();
-
-  // TC-001: Normal sale ADD with TPS+TVQ ─────────────────────────────────────
-  await runTest('TC-001', 'Normal sale (ADD) — TPS + TVQ', async () => {
-    const res = await api.post('/transactions', {
-      deviceId,
-      items: [{ description: 'Repas', quantity: 2, unitPrice: 15.00, taxCode: 'FP' }],
-      paymentMode: 'CASH',
-    });
-    const tx = res.data;
-    assert(tx.id, 'Transaction ID missing');
-    assert(tx.transactionType === 'ADDITION', 'Wrong transaction type');
-    assert(Number(tx.tpsAmount) > 0, 'TPS must be > 0');
-    assert(Number(tx.tvqAmount) > 0, 'TVQ must be > 0');
-    assert(tx.mevSubmissionStatus, 'MEV submission status missing');
+  await run('TC-001', 'Sale, TPS + TVQ, cash', async () => {
+    const tx = await sale(deviceId, [item('Poutine', 1299, 'FP', '2')]);
+    checkSigned(tx);
+    const t = taxes(2598);
+    assert(tx.subtotalCents === 2598 && tx.tpsCents === t.tps && tx.tvqCents === t.tvq, `taxes ${tx.tpsCents}/${tx.tvqCents} != ${t.tps}/${t.tvq}`);
+    assert(tx.mevStatus === 'ACCEPTED', `mevStatus ${tx.mevStatus}`);
+    assert(tx.mevTransactionNumber, 'MEV transaction number missing');
+    assert(tx.receipt.mentions.includes('PAIEMENT REÇU'), 'mention PAIEMENT REÇU missing');
+    assert(tx.receipt.qr.svg.includes('<svg'), 'QR SVG missing');
+    signed.push(tx);
   });
 
-  // TC-002: Sale TPS only ─────────────────────────────────────────────────────
-  await runTest('TC-002', 'Sale — TPS only (code F)', async () => {
-    const res = await api.post('/transactions', {
-      deviceId,
-      items: [{ description: 'Service', quantity: 1, unitPrice: 100.00, taxCode: 'F' }],
-      paymentMode: 'CREDIT_CARD',
-    });
-    const tx = res.data;
-    assert(Number(tx.tpsAmount) > 0, 'TPS must be > 0');
-    assert(Number(tx.tvqAmount) === 0, 'TVQ must be 0 for code F');
+  await run('TC-002', 'Sale, TPS only (F), credit card', async () => {
+    const tx = await sale(deviceId, [item('Service', 10000, 'F')], 'CRE');
+    checkSigned(tx);
+    assert(tx.tpsCents === 500 && tx.tvqCents === 0, 'code F: TPS only');
+    signed.push(tx);
   });
 
-  // TC-003: Sale TVQ only ─────────────────────────────────────────────────────
-  await runTest('TC-003', 'Sale — TVQ only (code P)', async () => {
-    const res = await api.post('/transactions', {
-      deviceId,
-      items: [{ description: 'Livre', quantity: 1, unitPrice: 25.00, taxCode: 'P' }],
-      paymentMode: 'CASH',
-    });
-    const tx = res.data;
-    assert(Number(tx.tpsAmount) === 0, 'TPS must be 0 for code P');
-    assert(Number(tx.tvqAmount) > 0, 'TVQ must be > 0');
+  await run('TC-003', 'Sale, TVQ only (P), debit card', async () => {
+    const tx = await sale(deviceId, [item('Article', 2500, 'P')], 'DEB');
+    checkSigned(tx);
+    assert(tx.tpsCents === 0 && tx.tvqCents === taxes(2500).tvq, 'code P: TVQ only');
+    signed.push(tx);
   });
 
-  // TC-004: Exempt sale ───────────────────────────────────────────────────────
-  await runTest('TC-004', 'Tax-exempt sale (no tax code)', async () => {
-    const res = await api.post('/transactions', {
-      deviceId,
-      items: [{ description: 'Médicament', quantity: 1, unitPrice: 50.00, taxCode: '' }],
-      paymentMode: 'CASH',
-    });
-    const tx = res.data;
-    assert(Number(tx.tpsAmount) === 0, 'TPS must be 0 for exempt');
-    assert(Number(tx.tvqAmount) === 0, 'TVQ must be 0 for exempt');
+  await run('TC-004', 'Sale not taxable (NON)', async () => {
+    const tx = await sale(deviceId, [item('Consigne', 500, 'NON')]);
+    checkSigned(tx);
+    assert(tx.tpsCents === 0 && tx.tvqCents === 0, 'NON: no tax');
+    signed.push(tx);
   });
 
-  // TC-005: Refund ───────────────────────────────────────────────────────────
-  await runTest('TC-005', 'Refund / credit note (RFC)', async () => {
-    // First create a sale to refund
-    const saleRes = await api.post('/transactions', {
-      deviceId,
-      items: [{ description: 'Article retourné', quantity: 1, unitPrice: 30.00, taxCode: 'FP' }],
-      paymentMode: 'CASH',
-    });
-    // Then refund it
-    const res = await api.post('/transactions', {
-      deviceId,
-      items: [{ description: 'Article retourné', quantity: -1, unitPrice: 30.00, taxCode: 'FP' }],
-      paymentMode: 'CASH',
-      originalTransactionId: saleRes.data.id,
-      transactionType: 'REFUND_CREDIT',
-    });
-    assert(res.data.id, 'Refund transaction ID missing');
+  let creditTarget: any;
+  await run('TC-005', 'Full credit note (negative amounts, referenced)', async () => {
+    creditTarget = await sale(deviceId, [item('Burger', 1500), item('Frites', 450)], 'CRE');
+    const cn = await api('POST', `/transactions/${creditTarget.id}/credit-note`, { full: true, reason: 'TC-005' });
+    checkSigned(cn);
+    assert(cn.documentKind === 'CREDIT_NOTE' && cn.transactionType === 'RFER', 'credit note must be RFER / CREDIT_NOTE');
+    assert(cn.subtotalCents === -creditTarget.subtotalCents && cn.tpsCents === -creditTarget.tpsCents && cn.tvqCents === -creditTarget.tvqCents, 'amounts must be the exact negatives');
+    assert(cn.relatedTransactionId === creditTarget.id, 'reference to the original missing');
+    assert(cn.receipt.mentions.includes('NOTE DE CRÉDIT'), 'mention NOTE DE CRÉDIT missing');
+    assert(cn.mevStatus === 'ACCEPTED', `mevStatus ${cn.mevStatus}`);
+    signed.push(creditTarget, cn);
+    await api('POST', `/transactions/${creditTarget.id}/credit-note`, { full: true }, [400]);
   });
 
-  // TC-006: No-sale ──────────────────────────────────────────────────────────
-  await runTest('TC-006', 'No-sale transaction (SOU)', async () => {
-    const res = await api.post('/transactions', {
-      deviceId,
-      items: [],
-      paymentMode: 'CASH',
-      transactionType: 'NO_SALE',
-    });
-    assert(res.data.id, 'No-sale transaction ID missing');
-    assert(Number(res.data.totalAmount) === 0, 'No-sale total must be 0');
+  await run('TC-006', '$0 receipt must use AUC (aucun paiement)', async () => {
+    await sale(deviceId, [item('Café offert', 0)], 'ARG', {}).then(() => { throw new Error('ARG accepted for $0'); }, (e) => assert(String(e.message).includes('422'), 'expected 422'));
+    const tx = await sale(deviceId, [item('Café offert', 0)], 'AUC');
+    checkSigned(tx);
+    assert(tx.totalCents === 0 && tx.paymentMode === 'AUC', '$0 with AUC');
+    signed.push(tx);
   });
 
-  // TC-007: Cancellation ─────────────────────────────────────────────────────
-  await runTest('TC-007', 'Transaction cancellation (ANN)', async () => {
-    const saleRes = await api.post('/transactions', {
-      deviceId,
-      items: [{ description: 'Item à annuler', quantity: 1, unitPrice: 20.00, taxCode: 'FP' }],
-      paymentMode: 'CASH',
-    });
-    const cancelRes = await api.post(`/transactions/${saleRes.data.id}/cancel`);
-    assert(cancelRes.data.id, 'Cancellation transaction missing');
+  await run('TC-007', 'E-commerce sale refuses cash; card accepted (commerElectr O)', async () => {
+    await sale(deviceId, [item('Commande web', 2000)], 'ARG', { ecommerce: true }).then(() => { throw new Error('cash accepted'); }, (e) => assert(String(e.message).includes('422'), 'expected 422'));
+    const tx = await sale(deviceId, [item('Commande web', 2000)], 'CRE', { ecommerce: true, serviceType: 'LVR' });
+    checkSigned(tx);
+    assert(tx.ecommerce === true, 'ecommerce flag');
+    signed.push(tx);
   });
 
-  // TC-008: Offline queue ────────────────────────────────────────────────────
-  await runTest('TC-008', 'Offline mode — queue then flush', async () => {
-    // Check offline status
-    const statusRes = await api.get(`/devices/${deviceId}/offline-status`);
-    const beforeCount = statusRes.data.pendingCount ?? 0;
-
-    // Flush queue
-    const flushRes = await api.post(`/devices/${deviceId}/flush-queue`);
-    assert(flushRes.data !== undefined, 'Flush response missing');
-    console.log(`\n       (queue had ${beforeCount} items before flush)`);
+  await run('TC-008', 'Offline: MEV-WEB down → signed locally, queued, then sent in a batch', async () => {
+    if (!SIM) throw new Error('needs QCMEV_SIM_CONTROL=1 (simulator)');
+    await api('POST', '/mev-simulator/_control', { mevDown: true });
+    try {
+      const a = await sale(deviceId, [item('Hors ligne A', 1000)]);
+      const b = await sale(deviceId, [item('Hors ligne B', 1100)]);
+      checkSigned(a); checkSigned(b);
+      assert(a.mevStatus === 'OFFLINE_PENDING' && b.mevStatus === 'OFFLINE_PENDING', `expected OFFLINE_PENDING, got ${a.mevStatus}/${b.mevStatus}`);
+      assert(a.receipt.mentions.includes('PROBLÈME DE COMMUNICATION'), 'offline mention missing');
+      const st = await api('GET', `/devices/${deviceId}/offline-status`);
+      assert(st.offlineMode === true && st.pendingCount >= 2, 'device must be in offline mode with 2+ queued');
+      signed.push(a, b);
+      await api('POST', '/mev-simulator/_control', { mevDown: false });
+      const flush = await api('POST', `/devices/${deviceId}/flush-queue`);
+      assert(flush.accepted >= 2 && flush.pendingCount === 0 && flush.offlineMode === false, `flush ${JSON.stringify(flush)}`);
+      const a2 = await api('GET', `/transactions/${a.id}`);
+      assert(a2.mevStatus === 'ACCEPTED' && a2.mevTransactionNumber && a2.noTrans === a.noTrans, 'after flush: same noTrans, accepted, MEV number');
+    } finally {
+      await api('POST', '/mev-simulator/_control', { mevDown: false });
+    }
   });
 
-  // TC-009: Post-invoice price mod ───────────────────────────────────────────
-  await runTest('TC-009', 'Post-invoice price modification (SW-76 §4.6)', async () => {
-    const saleRes = await api.post('/transactions', {
-      deviceId,
-      items: [{ description: 'Article prix modifié', quantity: 1, unitPrice: 50.00, taxCode: 'FP' }],
-      paymentMode: 'CASH',
-    });
-    const tx = saleRes.data;
-    const itemId = tx.items[0]?.id;
-    assert(itemId, 'Item ID missing from transaction');
-
-    const modRes = await api.post(`/transactions/${tx.id}/items/${itemId}/price`, {
-      newUnitPrice: 45.00,
-      reason: 'Rabais accordé en caisse',
-    });
-    assert(modRes.data.id, 'Price modification response missing');
+  await run('TC-009', 'Post-invoice price change → credit note + new receipt, both referenced', async () => {
+    const tx = await sale(deviceId, [item('Article prix modifié', 5000)]);
+    const r = await api('POST', `/transactions/${tx.id}/items/${tx.items[0].id}/price`, { newUnitPriceCents: 4500, reason: 'rabais caisse' });
+    assert(r.creditNote.subtotalCents === -5000 && r.creditNote.relatedTransactionId === tx.id, 'credit note for the old line');
+    assert(r.replacement.subtotalCents === 4500 && r.replacement.relatedTransactionId === tx.id, 'new receipt at the new price');
+    const mods = await api<any[]>('GET', `/transactions/${tx.id}/modifications`);
+    assert(mods.length >= 2, 'modification records');
+    signed.push(tx, r.creditNote, r.replacement);
   });
 
-  // TC-010: Post-invoice item removal ────────────────────────────────────────
-  await runTest('TC-010', 'Post-invoice item removal (SW-76 §4.6)', async () => {
-    const saleRes = await api.post('/transactions', {
-      deviceId,
-      items: [
-        { description: 'Item A', quantity: 1, unitPrice: 20.00, taxCode: 'FP' },
-        { description: 'Item B', quantity: 1, unitPrice: 10.00, taxCode: 'FP' },
-      ],
-      paymentMode: 'CASH',
-    });
-    const tx = saleRes.data;
-    const itemId = tx.items[0]?.id;
-    assert(itemId, 'Item ID missing');
-
-    const removeRes = await api.post(`/transactions/${tx.id}/items/${itemId}/remove`, {
-      reason: 'Article non disponible',
-    });
-    assert(removeRes.data.id, 'Item removal response missing');
+  await run('TC-010', 'Post-invoice item removal → credit note for that item', async () => {
+    const tx = await sale(deviceId, [item('Item A', 2000), item('Item B', 1000)]);
+    const cn = await api('POST', `/transactions/${tx.id}/items/${tx.items[1].id}/remove`, { reason: 'non disponible' });
+    assert(cn.subtotalCents === -1000 && cn.documentKind === 'CREDIT_NOTE', 'credit note of the removed item');
+    const orig = await api('GET', `/transactions/${tx.id}`);
+    assert(orig.status === 'PARTIALLY_CREDITED', `original status ${orig.status}`);
+    signed.push(tx, cn);
   });
 
-  // TC-011: Duplicate receipt ────────────────────────────────────────────────
-  await runTest('TC-011', 'Duplicate receipt (DUP)', async () => {
-    const saleRes = await api.post('/transactions', {
-      deviceId,
-      items: [{ description: 'Item reçu', quantity: 1, unitPrice: 15.00, taxCode: 'FP' }],
-      paymentMode: 'CASH',
-    });
-    const receipt = await api.get(`/transactions/${saleRes.data.id}/receipt`);
-    assert(receipt.data.transaction, 'Receipt transaction data missing');
-    assert(receipt.data.mevMention, 'MEV mention missing from receipt');
+  await run('TC-011', 'Reproduction (RPR) and duplicate (DUP) are transmitted', async () => {
+    const tx = await sale(deviceId, [item('Item reçu', 1500)]);
+    const rpr = await api('POST', `/transactions/${tx.id}/reprint`, { mode: 'RPR' });
+    const dup = await api('POST', `/transactions/${tx.id}/reprint`, { mode: 'DUP' });
+    assert(rpr.printMode === 'RPR' && rpr.receipt.mentions.includes('REPRODUCTION'), 'RPR mention');
+    assert(dup.printMode === 'DUP' && dup.receipt.mentions.includes('***COPIE DU COMMERÇANT***') && dup.receipt.mentions.includes('NE PAS REMETTRE AU CLIENT'), 'DUP mentions');
+    assert(rpr.mevStatus === 'ACCEPTED' && dup.mevStatus === 'ACCEPTED', 'both transmitted and accepted');
+    assert(rpr.noTrans !== tx.noTrans && dup.relatedTransactionId === tx.id, 'each copy is its own referenced transaction');
+    signed.push(tx, rpr, dup);
   });
 
-  // TC-012: Annual report ────────────────────────────────────────────────────
-  await runTest('TC-012', 'Annual user report (DOC — RUT)', async () => {
-    const currentYear = new Date().getFullYear();
-    const reportYear  = currentYear - 1;
-    const res = await api.post('/reports/annual', { year: reportYear });
-    assert(res.data.id, 'Report ID missing');
-    assert(res.data.reportType, 'Report type missing');
+  await run('TC-012', 'User report (DOC RUT) transmitted when displayed', async () => {
+    const year = new Date().getFullYear();
+    const r = await api('POST', '/reports/user-report', { year });
+    assert(r.mevStatus === 'ACCEPTED' && r.mevReportNumber && r.transmitted === true, `report ${r.mevStatus}`);
+    assert(r.totalTransactions > 0, 'the report counts this year\'s receipts');
+    const shown = ((r.display?.lines ?? []) as string[]).join('\n');
+    for (const s of ["RAPPORT DE L'UTILISATEUR", 'No TPS', 'No TVQ', 'Utilisateur', 'Dernier document produit', "Identifiant de l'appareil", 'Identifiant du SEV', 'Version du SEV', 'Connexion au compte', 'Rapport produit le', '[CODE QR]']) {
+      assert(shown.includes(s), `the displayed report shows « ${s} »`);
+    }
+    assert(!/avantTax|apresTax/.test(shown), 'the sales summary is transmitted, never displayed');
   });
 
-  // ─── Summary ──────────────────────────────────────────────────────────────
-  console.log('\n───────────────────────────────────────────────────────');
-  console.log(`\n📊  Results: ${passed} passed, ${failed} failed out of ${passed + failed} tests\n`);
+  // Chain check across everything signed above (single device): each preced = the previous signature.
+  await run('CHAIN', 'Signature chain and per-day numbering on the device', async () => {
+    const all = await api<any[]>('GET', '/transactions?take=200');
+    const mine = all.filter((t) => t.deviceId === deviceId).sort((a, b) => a.deviceSeq - b.deviceSeq);
+    assert(mine.length >= signed.length, 'all transactions listed');
+    for (let i = 0; i < mine.length; i++) {
+      const expected = i === 0 ? (mine[0].deviceSeq === 1 ? FIRST_PRECED : mine[0].previousSignature) : mine[i - 1].signature;
+      assert(mine[i].previousSignature === expected, `chain broken at deviceSeq ${mine[i].deviceSeq}`);
+    }
+    const keys = new Set(mine.map((t) => `${t.civilDate}|${t.noTrans}`));
+    assert(keys.size === mine.length, 'noTrans must be unique per device per civil day');
+    const h = crypto.createHash('sha256').update(mine.map((t) => t.signature).join('')).digest('hex').slice(0, 12);
+    console.log(`\n       (${mine.length} transactions, chain fingerprint ${h})`);
+  });
 
-  if (failed > 0) {
-    console.log('❌  Failed tests:');
-    results.filter((r) => r.status === 'FAIL').forEach((r) => {
-      console.log(`   ${r.id}  ${r.name}`);
-      console.log(`        → ${r.error}`);
-    });
-    console.log('');
-    process.exit(1);
-  } else {
-    console.log('✅  All SW-77 test cases passed! Integration is ready for Revenu Québec review.\n');
-  }
+  const passed = results.filter((r) => r.status === 'PASS').length;
+  console.log(`\nResults: ${passed} passed, ${results.length - passed} failed out of ${results.length}`);
+  console.log('Reminder: these are internal scenarios against our own simulator, not Revenu Québec\'s SW-77 cases.\n');
+  if (passed !== results.length) process.exit(1);
 }
 
-main().catch((err) => {
-  console.error('\n💥 Unexpected error:', err.message ?? err);
+main().catch((e) => {
+  console.error(`\nUnexpected error: ${e instanceof Error ? e.message : e}`);
   process.exit(2);
 });

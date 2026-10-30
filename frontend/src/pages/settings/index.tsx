@@ -3,7 +3,7 @@
  */
 import React, { useEffect, useState } from 'react';
 import Layout from '../../components/Layout';
-import { getMe, getMevStatus, getActiveCert, requestCertificate, getExpiringCerts } from '../../lib/api';
+import { getMe, getActiveCert, requestCertificate, getExpiringCerts, listDevices, updateMe } from '../../lib/api';
 
 export default function SettingsPage() {
   const [operator, setOperator]     = useState<any>(null);
@@ -13,6 +13,18 @@ export default function SettingsPage() {
   const [certLoading, setCertLoading] = useState(false);
   const [error, setError]           = useState('');
   const [certMsg, setCertMsg]       = useState('');
+
+  // UTC of the business address, written in the certificate request (L=): -05:00, or -04:00 for
+  // Îles-de-la-Madeleine and Basse-Côte-Nord (Revenu Québec, « Configuration du SEV »). Never a daylight-saving offset.
+  const saveAddressUtc = async (addressUtc: string) => {
+    setError('');
+    try {
+      const r = await updateMe({ addressUtc });
+      setOperator(r.data);
+    } catch (err: any) {
+      setError(err.response?.data?.message ?? "Erreur lors de l'enregistrement");
+    }
+  };
 
   useEffect(() => {
     Promise.all([getMe(), getActiveCert(), getExpiringCerts()])
@@ -29,8 +41,10 @@ export default function SettingsPage() {
     setCertLoading(true);
     setCertMsg('');
     setError('');
-    // The CRT request is tied to a device (its key pair / CSR). Use the first active one.
-    const device = operator?.devices?.find((d: any) => d.isActive) ?? operator?.devices?.[0];
+    // The CRT request is tied to a device (its key pair / CSR). Use the first active one
+    // (AJO the first time, REM to replace its current certificate).
+    const devices: any[] = await listDevices().then((r) => r.data ?? []).catch(() => []);
+    const device = devices.find((d: any) => d.isActive) ?? devices[0];
     if (!device) {
       setError("Ajoutez d'abord un appareil (page Appareils) avant de demander un certificat.");
       setCertLoading(false);
@@ -70,27 +84,34 @@ export default function SettingsPage() {
           {operator ? (
             <dl className="grid grid-cols-2 gap-y-3 text-sm">
               <dt className="text-gray-500">Nom commercial</dt>
-              <dd className="text-gray-900 font-medium">{operator.businessName}</dd>
+              <dd className="text-gray-900 font-medium">{operator.name}</dd>
 
-              <dt className="text-gray-500">NEQ</dt>
-              <dd className="font-mono">{operator.neq ?? '–'}</dd>
-
-              <dt className="text-gray-500">Code d'autorisation</dt>
-              <dd className="font-mono">{operator.authorizationCode ?? '–'}</dd>
+              <dt className="text-gray-500">NEQ, TPS, TVQ, n° de dossier, code d'autorisation</dt>
+              <dd className="text-gray-500">enregistrés, jamais affichés</dd>
 
               <dt className="text-gray-500">Secteur d'activité</dt>
               <dd>{operator.sector ?? '–'}</dd>
 
-              <dt className="text-gray-500">Environnement MEV</dt>
+              <dt className="text-gray-500">UTC de l'adresse (certificat)</dt>
               <dd>
-                <span className="badge-blue">{operator.mevEnvironment ?? '–'}</span>
+                <select
+                  value={operator.addressUtc ?? '-05:00'}
+                  onChange={(e) => saveAddressUtc(e.target.value)}
+                  className="border border-gray-300 rounded px-2 py-1"
+                >
+                  <option value="-05:00">-05:00 (Québec)</option>
+                  <option value="-04:00">-04:00 (Îles-de-la-Madeleine, Basse-Côte-Nord)</option>
+                </select>
+                <p className="text-xs text-gray-400 mt-1">Utilisé par la prochaine demande de certificat.</p>
               </dd>
 
-              <dt className="text-gray-500">Numéro de TPS</dt>
-              <dd className="font-mono">{operator.tpsNumber ?? '–'}</dd>
+              <dt className="text-gray-500">Environnement MEV</dt>
+              <dd>
+                <span className="badge-blue">{operator.environment ?? '–'}</span>
+              </dd>
 
-              <dt className="text-gray-500">Numéro de TVQ</dt>
-              <dd className="font-mono">{operator.tvqNumber ?? '–'}</dd>
+              <dt className="text-gray-500">Certifié par Revenu Québec</dt>
+              <dd>{operator.certified ? 'Oui' : 'Non (simulateur / essais seulement)'}</dd>
             </dl>
           ) : (
             <p className="text-gray-500 text-sm">Aucun profil chargé</p>
@@ -178,7 +199,7 @@ export default function SettingsPage() {
         <div className="card">
           <h3 className="font-semibold text-gray-900 mb-2">Simulateur MEV</h3>
           <p className="text-sm text-gray-500 mb-3">
-            Exécutez les cas de test SW-77 pour valider votre intégration avant la soumission à Revenu Québec.
+            Simulateur local (pas Revenu Québec) : les cas SW-77 personnalisés se font dans les environnements DEV / ESSAI de Revenu Québec.
           </p>
           <a
             href="/api/mev-simulator/health"

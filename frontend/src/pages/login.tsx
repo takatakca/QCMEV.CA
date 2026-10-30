@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { login } from '../lib/api';
 
@@ -74,8 +75,11 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <p className="mt-6 text-center text-xs text-gray-400">
-          Certifié Revenu Québec · MEV-WEB 2025
+        <p className="mt-6 text-center text-sm text-gray-500">
+          Nouveau restaurant ? <Link href="/register" className="text-brand-700 font-medium hover:underline">Créer un compte</Link>
+        </p>
+        <p className="mt-2 text-center text-xs text-gray-400">
+          Logiciel non certifié · simulateur / DEV seulement
         </p>
       </div>
     </div>
